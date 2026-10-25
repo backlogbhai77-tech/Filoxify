@@ -6,13 +6,14 @@ const archiver = require('archiver');
 
 const app = express();
 
-const uploadDir = path.join(__dirname, 'uploads');
+// Vercel ke liye /tmp directory use karna zaroori hai
+const uploadDir = path.join('/tmp', 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 const upload = multer({ 
-    dest: 'uploads/', 
+    dest: '/tmp/uploads/', 
     limits: { fileSize: 300 * 1024 * 1024 } 
 });
 
@@ -91,5 +92,5 @@ app.get('/api/zip/:pin', (req, res) => {
     archive.finalize();
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log('Vault running on ' + PORT));
+// Vercel ke liye app ko export karna zaroori hai (app.listen hata diya hai)
+module.exports = app;
