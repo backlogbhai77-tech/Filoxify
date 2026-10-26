@@ -21,7 +21,13 @@ let vault = {};
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Root folder se static files aur index.html serve karne ke liye
+app.use(express.static(path.join(__dirname)));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // 15-Minute Auto Delete
 setInterval(() => {
@@ -92,5 +98,5 @@ app.get('/api/zip/:pin', (req, res) => {
     archive.finalize();
 });
 
-// Vercel ke liye app ko export karna zaroori hai (app.listen hata diya hai)
+// Vercel ke liye app ko export karna zaroori hai
 module.exports = app;
