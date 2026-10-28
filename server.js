@@ -2,21 +2,24 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const FormData = require('form-data');
+const cloudinary = require('cloudinary').v2;
 const archiver = require('archiver');
 
 const app = express();
+
+// Cloudinary Configuration direct set kar di hai
+cloudinary.config({
+  cloudinary_url: 'cloudinary://<your_api_key>:<your_api_secret>@bdyqf9nh'
+});
 
 const uploadDir = path.join('/tmp', 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Multer temporary local storage for forwarding to File.io cloud
 const upload = multer({ 
     dest: '/tmp/uploads/', 
-    limits: { fileSize: 500 * 1024 * 1024 } // 500MB max support
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB max
 });
 
 let vault = {};
@@ -30,7 +33,7 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// 15-Minute Auto Delete local tracking
+// Auto delete local cache tracking after 15 mins
 setInterval(() => {
     const now = Date.now();
     for (const pin in vault) {
@@ -43,7 +46,7 @@ setInterval(() => {
     }
 }, 60 * 1000);
 
-// Upload API: Forwards file/text to File.io Storage Tool automatically via code (No API Key)
+// Upload API: Direct to Cloudinary
 app.post('/api/upload', upload.array('files', 20), async (req, res) => {
     try {
         if (!req.files || req.files.length === 0) return res.status(400).json({ error: "No files uploaded" });
@@ -51,31 +54,18 @@ app.post('/api/upload', upload.array('files', 20), async (req, res) => {
         let uploadedFilesMeta = [];
 
         for (const file of req.files) {
-            const formData = new FormData();
-            formData.append('file', fs.createReadStream(file.path), {
-                filename: file.originalname,
-                contentType: file.mimetype
+            // Uploading file to Cloudinary cloud
+            const result = await cloudinary.uploader.upload(file.path, {
+                resource_type: "auto",
+                folder: "voltdrop_vault"
             });
 
-            // Uploading to File.io cloud storage tool
-            const response = await axios.post('https://file.io', formData, {
-                headers: formData.getHeaders(),
-                maxBodyLength: Infinity,
-                maxContentLength: Infinity
+            uploadedFilesMeta.push({
+                name: file.originalname,
+                type: file.mimetype,
+                url: result.secure_url,
+                localPath: file.path
             });
-
-            if (response.data && response.data.success) {
-                const directUrl = response.data.link;
-
-                uploadedFilesMeta.push({
-                    name: file.originalname,
-                    type: file.mimetype,
-                    url: directUrl,
-                    localPath: file.path
-                });
-            } else {
-                throw new Error("Cloud storage upload failed");
-            }
         }
 
         const pin = Math.floor(1000 + Math.random() * 9000).toString();
@@ -87,7 +77,7 @@ app.post('/api/upload', upload.array('files', 20), async (req, res) => {
         res.json({ pin });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: "Upload failed: " + err.message });
+        res.status(500).json({ error: "Cloudinary Upload failed: " + err.message });
     }
 });
 
