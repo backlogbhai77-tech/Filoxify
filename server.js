@@ -1,45 +1,94 @@
 const express = require('express');
-const path = require('path');
-const archiver = require('archiver');
+const multer = require('multer');
 const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const FormData = require('form-data');
+const archiver = require('archiver');
 
 const app = express();
 
+const uploadDir = path.join('/tmp', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Multer configuration for up to 500MB
+const upload = multer({ 
+    dest: '/tmp/uploads/', 
+    limits: { fileSize: 500 * 1024 * 1024 } 
+});
+
 let vault = {};
 
+// Disable default JSON body size limit blocking for multipart forms
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
+
 app.use(express.static(path.join(__dirname)));
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Auto delete vault items after 15 mins
+// Auto delete local cache after 15 mins
 setInterval(() => {
     const now = Date.now();
     for (const pin in vault) {
         if (now - vault[pin].timestamp > 15 * 60 * 1000) {
+            vault[pin].files.forEach(f => {
+                try { if (f.localPath && fs.existsSync(f.localPath)) fs.unlinkSync(f.localPath); } catch (e) {}
+            });
             delete vault[pin];
         }
     }
 }, 60 * 1000);
 
-// Client direct upload ke baad sirf metadata (URL & Name) save karega
-app.post('/api/save-vault', (req, res) => {
+// Upload API
+app.post('/api/upload', upload.array('files', 20), async (req, res) => {
     try {
-        const { files } = req.body;
-        if (!files || files.length === 0) return res.status(400).json({ error: "No files metadata" });
+        if (!req.files || req.files.length === 0) return res.status(400).json({ error: "No files uploaded" });
+        
+        let uploadedFilesMeta = [];
+
+        for (const file of req.files) {
+            const formData = new FormData();
+            formData.append('file', fs.createReadStream(file.path), {
+                filename: file.originalname,
+                contentType: file.mimetype
+            });
+
+            const response = await axios.post('https://tmpfiles.io/api/v1/upload', formData, {
+                headers: formData.getHeaders(),
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity
+            });
+
+            if (response.data && response.data.status === 'success') {
+                const rawUrl = response.data.data.url;
+                const directUrl = rawUrl.replace('tmpfiles.io/', 'tmpfiles.io/dl/');
+
+                uploadedFilesMeta.push({
+                    name: file.originalname,
+                    type: file.mimetype,
+                    url: directUrl,
+                    localPath: file.path
+                });
+            } else {
+                throw new Error("Cloud storage upload failed");
+            }
+        }
 
         const pin = Math.floor(1000 + Math.random() * 9000).toString();
         vault[pin] = {
-            files: files,
+            files: uploadedFilesMeta,
             timestamp: Date.now()
         };
 
         res.json({ pin });
     } catch (err) {
-        res.status(500).json({ error: "Failed to save vault" });
+        console.error(err);
+        res.status(500).json({ error: "Upload failed: " + err.message });
     }
 });
 
@@ -47,8 +96,30 @@ app.get('/api/check/:pin', (req, res) => {
     const item = vault[req.params.pin];
     if (!item) return res.status(404).json({ error: "Invalid PIN ya file expire ho chuki hai!" });
     res.json({ 
-        files: item.files.map(f => ({ name: f.name, type: f.type, url: f.url })) 
+        files: item.files.map(f => ({ name: f.name, type: f.type })) 
     });
+});
+
+app.get('/api/view/:pin/:index', (req, res) => {
+    const item = vault[req.params.pin];
+    if (!item) return res.status(404).send("Expired");
+    const file = item.files[parseInt(req.params.index)];
+    if (!file) return res.status(404).send("Missing");
+    res.redirect(file.url);
+});
+
+app.get('/api/file/:pin/:index', (req, res) => {
+    const item = vault[req.params.pin];
+    if (!item) return res.status(404).send("Expired");
+    const file = item.files[parseInt(req.params.index)];
+    if (!file) return res.status(404).send("Missing");
+    res.redirect(file.url);
+});
+
+app.get('/api/zip/:pin', (req, res) => {
+    const item = vault[req.params.pin];
+    if (!item) return res.status(404).send("Expired");
+    res.redirect(item.files[0].url);
 });
 
 module.exports = app;
