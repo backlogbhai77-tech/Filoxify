@@ -1,15 +1,16 @@
 {
-  "name": "my-file-vault",
+  "name": "voltdrop",
   "version": "1.0.0",
+  "description": "Secure File and Text Transfer",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
- "dependencies": {
-  "axios": "^1.6.0",
-  "form-data": "^4.0.0",
-  "express": "^4.18.2",
-  "multer": "^1.4.5-lts.1",
-  "archiver": "^6.0.1"
- }
-  
+  "dependencies": {
+    "archiver": "^6.0.1",
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
