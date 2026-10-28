@@ -13,15 +13,14 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Multer configuration for up to 500MB
+// Multer temporary local storage for forwarding to File.io cloud
 const upload = multer({ 
     dest: '/tmp/uploads/', 
-    limits: { fileSize: 500 * 1024 * 1024 } 
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB max support
 });
 
 let vault = {};
 
-// Disable default JSON body size limit blocking for multipart forms
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
@@ -31,7 +30,7 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Auto delete local cache after 15 mins
+// 15-Minute Auto Delete local tracking
 setInterval(() => {
     const now = Date.now();
     for (const pin in vault) {
@@ -44,7 +43,7 @@ setInterval(() => {
     }
 }, 60 * 1000);
 
-// Upload API
+// Upload API: Forwards file/text to File.io Storage Tool automatically via code (No API Key)
 app.post('/api/upload', upload.array('files', 20), async (req, res) => {
     try {
         if (!req.files || req.files.length === 0) return res.status(400).json({ error: "No files uploaded" });
@@ -58,15 +57,15 @@ app.post('/api/upload', upload.array('files', 20), async (req, res) => {
                 contentType: file.mimetype
             });
 
-            const response = await axios.post('https://tmpfiles.io/api/v1/upload', formData, {
+            // Uploading to File.io cloud storage tool
+            const response = await axios.post('https://file.io', formData, {
                 headers: formData.getHeaders(),
                 maxBodyLength: Infinity,
                 maxContentLength: Infinity
             });
 
-            if (response.data && response.data.status === 'success') {
-                const rawUrl = response.data.data.url;
-                const directUrl = rawUrl.replace('tmpfiles.io/', 'tmpfiles.io/dl/');
+            if (response.data && response.data.success) {
+                const directUrl = response.data.link;
 
                 uploadedFilesMeta.push({
                     name: file.originalname,
@@ -105,6 +104,7 @@ app.get('/api/view/:pin/:index', (req, res) => {
     if (!item) return res.status(404).send("Expired");
     const file = item.files[parseInt(req.params.index)];
     if (!file) return res.status(404).send("Missing");
+
     res.redirect(file.url);
 });
 
@@ -113,6 +113,7 @@ app.get('/api/file/:pin/:index', (req, res) => {
     if (!item) return res.status(404).send("Expired");
     const file = item.files[parseInt(req.params.index)];
     if (!file) return res.status(404).send("Missing");
+
     res.redirect(file.url);
 });
 
