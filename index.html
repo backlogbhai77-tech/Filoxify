@@ -3,17 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>VoltDrop | Secure File & Text Transfer</title>
+<title> Filoxify | Secure Pro File & Text Vault</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root[data-theme="dark"] {
-    --bg: #080b11;
-    --surface: #0e141f;
-    --surface2: #141c2b;
-    --surface3: #1a2538;
+    --bg: #07090e;
+    --surface: #0b1017;
+    --surface2: #111823;
+    --surface3: #182232;
     --border: rgba(255, 255, 255, 0.08);
-    --border2: rgba(255, 255, 255, 0.15);
+    --border2: rgba(255, 255, 255, 0.16);
     --primary: #38bdf8;
     --primary-glow: rgba(56, 189, 248, 0.25);
     --accent: #6366f1;
@@ -23,7 +23,7 @@
     --text: #f1f5f9;
     --muted: #94a3b8;
     --muted2: #64748b;
-    --tab-bg: rgba(0, 0, 0, 0.25);
+    --tab-bg: rgba(0, 0, 0, 0.3);
 }
 
 :root[data-theme="light"] {
@@ -42,7 +42,7 @@
     --text: #0f172a;
     --muted: #475569;
     --muted2: #64748b;
-    --tab-bg: rgba(0, 0, 0, 0.05);
+    --tab-bg: rgba(0, 0, 0, 0.04);
 }
 
 * {
@@ -206,7 +206,7 @@ button {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 20px;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
     overflow: hidden;
 }
 
@@ -295,42 +295,94 @@ button {
     display: block;
 }
 
-/* Premium Code / Text Editor Box */
-.text-input-wrapper {
-    position: relative;
-    background: var(--surface2);
-    border: 1px solid var(--border2);
-    border-radius: 14px;
+/* ---------------- PRO CODE / TEXT EDITOR BOX ---------------- */
+
+.pro-editor {
+    background: #04060a;
+    border: 1.5px solid var(--border2);
+    border-radius: 16px;
     overflow: hidden;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
-.text-input-wrapper:focus-within {
-    border-color: var(--primary);
-}
-
-.text-input-box {
-    width: 100%;
-    height: 200px;
-    background: transparent;
-    border: none;
-    padding: 12px;
-    color: var(--text);
-    font-size: 12px;
-    font-family: 'Courier New', Courier, monospace;
-    resize: vertical;
-    line-height: 1.5;
-    outline: none;
-}
-
-.text-editor-footer {
+.pro-editor-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
-    background: var(--surface3);
-    border-top: 1px solid var(--border);
+    background: #0d131d;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.editor-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.editor-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+}
+
+.dot-red { background: #ef4444; }
+.dot-yellow { background: #f59e0b; }
+.dot-green { background: #10b981; }
+
+.editor-title {
     font-size: 11px;
+    font-weight: 600;
     color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.editor-actions-top {
+    display: flex;
+    gap: 6px;
+}
+
+.editor-action-btn {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    border: none;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.editor-action-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text);
+}
+
+.text-input-box {
+    width: 100%;
+    height: 220px;
+    background: transparent;
+    border: none;
+    padding: 14px;
+    color: #e2e8f0;
+    font-size: 12.5px;
+    font-family: 'JetBrains Mono', monospace;
+    resize: vertical;
+    line-height: 1.6;
+    outline: none;
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: auto;
+}
+
+.pro-editor-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 14px;
+    background: #080c14;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    color: var(--muted2);
+    font-family: 'JetBrains Mono', monospace;
 }
 
 /* ---------------- DROPZONE ---------------- */
@@ -721,21 +773,22 @@ input[type=file] {
     height: 13px;
 }
 
-/* Received Code / Text Box View */
+/* Pro Received Code / Text Box View */
 .received-text-box {
     width: 100%;
-    background: #05070a;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px;
+    background: #030508;
+    border: 1px solid var(--border2);
+    border-radius: 12px;
+    padding: 14px;
     font-size: 12px;
     color: #38bdf8;
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 260px;
+    white-space: pre;
+    overflow-x: auto;
+    max-height: 280px;
     overflow-y: auto;
     margin-bottom: 12px;
-    font-family: 'Courier New', Courier, monospace;
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.6;
 }
 
 /* Modal Popup Preview */
@@ -873,7 +926,7 @@ input[type=file] {
             </button>
             <div class="status">
                 <span class="status-dot"></span>
-                Ready
+                Ready (500MB Max)
             </div>
         </div>
     </header>
@@ -881,7 +934,7 @@ input[type=file] {
     <section class="hero">
         <div class="hero-badge">Direct Relay</div>
         <h1>Transfer files & text <span>anywhere.</span></h1>
-        <p>No storage retention, no accounts. Direct transfer via secure one-time keys.</p>
+        <p>Up to 500MB files & code snippets. Zero storage retention, secure keys.</p>
     </section>
 
     <main class="card">
@@ -899,8 +952,8 @@ input[type=file] {
         <!-- SEND PANEL -->
         <section class="panel active" id="panelSend">
             <div class="sub-tabs">
-                <button class="sub-tab active" id="subTabFile" onclick="switchSendType('file')">📁 Send Files</button>
-                <button class="sub-tab" id="subTabText" onclick="switchSendType('text')">📝 Send Code / Text</button>
+                <button class="sub-tab active" id="subTabFile" onclick="switchSendType('file')">📁 Send Files (500MB)</button>
+                <button class="sub-tab" id="subTabText" onclick="switchSendType('text')">📝 Pro Code / Text</button>
             </div>
 
             <!-- FILE UPLOAD SUB-PANEL -->
@@ -909,12 +962,12 @@ input[type=file] {
                     <div class="drop-icon-box">
                         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                     </div>
-                    <div class="drop-title" id="dropTitle">Choose or drop files</div>
+                    <div class="drop-title" id="dropTitle">Choose or drop files (Max 500MB)</div>
                     <div class="drop-sub">Fast relay to phone, PC or tablet</div>
                     <div class="drop-types">
-                        <span class="tag">Images</span>
                         <span class="tag">Videos</span>
-                        <span class="tag">Files</span>
+                        <span class="tag">Archives</span>
+                        <span class="tag">Docs</span>
                     </div>
                 </label>
                 <input type="file" id="fileInput" multiple>
@@ -933,13 +986,25 @@ input[type=file] {
                 </button>
             </div>
 
-            <!-- TEXT / CODE UPLOAD SUB-PANEL -->
+            <!-- PRO CODE / TEXT EDITOR SUB-PANEL -->
             <div class="sub-panel" id="panelSendText">
-                <div class="text-input-wrapper">
-                    <textarea class="text-input-box" id="textInputContent" placeholder="Paste your 500+ lines of code, notes or long message here..." oninput="updateCharCount()"></textarea>
-                    <div class="text-editor-footer">
-                        <span id="charCount">0 characters</span>
-                        <span>Auto-optimized</span>
+                <div class="pro-editor">
+                    <div class="pro-editor-header">
+                        <div class="editor-dots">
+                            <span class="editor-dot dot-red"></span>
+                            <span class="editor-dot dot-yellow"></span>
+                            <span class="editor-dot dot-green"></span>
+                        </div>
+                        <div class="editor-title">workspace.txt</div>
+                        <div class="editor-actions-top">
+                            <button class="editor-action-btn" onclick="clearEditor()">Clear</button>
+                            <button class="editor-action-btn" onclick="pasteClipboard()">Paste</button>
+                        </div>
+                    </div>
+                    <textarea class="text-input-box" id="textInputContent" placeholder="// Paste your 500+ lines of code or notes here..." oninput="updateCharCount()"></textarea>
+                    <div class="pro-editor-footer">
+                        <span id="charCount">0 lines • 0 chars</span>
+                        <span>UTF-8 Ready</span>
                     </div>
                 </div>
                 <button class="cta" id="uploadTextBtn" onclick="triggerTextUpload()">
@@ -1069,7 +1134,25 @@ function switchSendType(type) {
 
 function updateCharCount() {
     const text = document.getElementById('textInputContent').value;
-    document.getElementById('charCount').innerText = `${text.length} characters (${text.split('\n').length} lines)`;
+    const lines = text ? text.split('\n').length : 0;
+    document.getElementById('charCount').innerText = `${lines} lines • ${text.length} chars`;
+}
+
+function clearEditor() {
+    document.getElementById('textInputContent').value = '';
+    updateCharCount();
+    showToast('Editor cleared');
+}
+
+async function pasteClipboard() {
+    try {
+        const text = await navigator.clipboard.readText();
+        document.getElementById('textInputContent').value = text;
+        updateCharCount();
+        showToast('Pasted from clipboard');
+    } catch (e) {
+        showToast('Permission denied or empty clipboard');
+    }
 }
 
 const fileInput = document.getElementById('fileInput');
@@ -1095,7 +1178,7 @@ function removeFile(index) {
     filesQueue.splice(index, 1);
     renderFiles();
     if (!filesQueue.length) {
-        document.getElementById('dropTitle').innerText = 'Choose or drop files';
+        document.getElementById('dropTitle').innerText = 'Choose or drop files (Max 500MB)';
     }
 }
 
@@ -1155,7 +1238,7 @@ function renderFiles() {
     document.getElementById('dropTitle').innerText = `${filesQueue.length} file(s) attached`;
 }
 
-// Upload Files
+// Upload Files (Supports upto 500MB smoothly with progress bar)
 function triggerUpload() {
     if (!filesQueue.length) return showToast('Add files first');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -1190,28 +1273,27 @@ function triggerUpload() {
                 showToast('Server response parsing failed');
             }
         } else {
-            showToast('Transfer initialization failed');
+            showToast('Upload failed. File might exceed 500MB limit.');
         }
     };
 
     xhr.onerror = () => {
         uploadBtn.disabled = false;
         progressCard.style.display = 'none';
-        showToast('Network error on transfer');
+        showToast('Network error during upload');
     };
 
     xhr.send(fd);
 }
 
-// Optimized Text / Code Upload (Handles 500+ lines safely without lag)
+// Optimized Pro Text / Code Upload
 function triggerTextUpload() {
     const textContent = document.getElementById('textInputContent').value;
-    if (!textContent.trim()) return showToast('Please enter some text or code');
+    if (!textContent.trim()) return showToast('Editor is empty');
 
     const uploadBtn = document.getElementById('uploadTextBtn');
     uploadBtn.disabled = true;
 
-    // Convert large text efficiently into a Blob file
     const textBlob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
     const textFile = new File([textBlob], `code_snippet_${Math.floor(1000+Math.random()*9000)}.txt`, { type: 'text/plain' });
 
@@ -1231,7 +1313,7 @@ function triggerTextUpload() {
                 showToast('Parsing failed');
             }
         } else {
-            showToast('Text transfer failed (Too large)');
+            showToast('Text transfer failed');
         }
     };
     xhr.onerror = () => {
@@ -1289,7 +1371,7 @@ document.getElementById('pinInput').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') verifyAndFetchVault();
 });
 
-// Receiver verification handler with safe streaming reader for large texts
+// Receiver verification handler
 async function verifyAndFetchVault() {
     const pin = document.getElementById('pinInput').value.trim();
     if (!/^\d{4}$/.test(pin)) return showToast('Enter a valid 4-digit key');
@@ -1335,20 +1417,19 @@ async function verifyAndFetchVault() {
                     </div>`;
             }
 
-            // Safe Async Text Reader for 500+ lines code blocks without freezing browser
             if (isTxt) {
                 const boxId = 'txtBox_' + pin;
                 let html = `
                     <div class="vault-found-card">
                         <div class="vault-found-header">
-                            <span>📝 Shared Code / Text</span>
+                            <span>📝 Pro Code / Text Snippet</span>
                             <span>Key: ${pin}</span>
                         </div>
-                        <div class="received-text-box" id="${boxId}">Loading lines securely...</div>
+                        <div class="received-text-box" id="${boxId}">Loading code snippet...</div>
                         <div style="display:flex; gap:8px;">
                             <button class="cta" style="margin-top:0;" onclick="copySharedText('${boxId}')">
                                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                                Copy All Text
+                                Copy All Code
                             </button>
                             <a href="/api/file/${encodeURIComponent(pin)}/0" download="${escapeHTML(singleFile.name)}" class="btn-secondary" style="padding:0 14px; text-decoration:none; display:flex; align-items:center; justify-content:center;">
                                 Save File
@@ -1358,7 +1439,6 @@ async function verifyAndFetchVault() {
                 `;
                 resultBox.innerHTML = html;
 
-                // Fetch text asynchronously
                 fetch(viewUrl)
                     .then(r => r.text())
                     .then(textContent => {
@@ -1366,7 +1446,7 @@ async function verifyAndFetchVault() {
                         if (box) box.innerText = textContent;
                     }).catch(() => {
                         const box = document.getElementById(boxId);
-                        if (box) box.innerText = 'Error loading text content.';
+                        if (box) box.innerText = 'Error loading content.';
                     });
                 return;
             }
@@ -1394,7 +1474,6 @@ async function verifyAndFetchVault() {
             return;
         }
 
-        // MULTIPLE FILES LIST
         let html = `
             <div class="vault-found-card">
                 <div class="vault-found-header">
@@ -1431,16 +1510,14 @@ async function verifyAndFetchVault() {
     }
 }
 
-// Copy shared text function
 function copySharedText(boxId) {
     const box = document.getElementById(boxId);
     if (!box) return;
     navigator.clipboard.writeText(box.innerText).then(() => {
-        showToast('All code/text copied to clipboard!');
+        showToast('All code copied to clipboard!');
     });
 }
 
-// Modal Lightbox Controller for Fullscreen
 function openPreview(pin, index, name, type) {
     const modal = document.getElementById('previewModal');
     const title = document.getElementById('modalFileName');
@@ -1472,7 +1549,6 @@ function showToast(msg) {
     toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-// Link Auto-detector
 window.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
     const pin = urlParams.get('pin');
