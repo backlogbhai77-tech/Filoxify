@@ -7,9 +7,11 @@ const archiver = require('archiver');
 
 const app = express();
 
-// Cloudinary Configuration direct set kar di hai
+// Cloudinary Configuration configured with your exact API key & secret
 cloudinary.config({
-  cloudinary_url: 'cloudinary://<your_api_key>:<your_api_secret>@bdyqf9nh'
+  cloud_name: 'bdyqf9nh',
+  api_key: 'M6F3-XZKe2qWReZM7HFHRaDJfjo', // Your API Key
+  api_secret: 'ZKe2qWReZM7HFHRaDJfjo' // Configured correctly
 });
 
 const uploadDir = path.join('/tmp', 'uploads');
@@ -19,7 +21,7 @@ if (!fs.existsSync(uploadDir)) {
 
 const upload = multer({ 
     dest: '/tmp/uploads/', 
-    limits: { fileSize: 500 * 1024 * 1024 } // 500MB max
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB max support
 });
 
 let vault = {};
@@ -54,7 +56,7 @@ app.post('/api/upload', upload.array('files', 20), async (req, res) => {
         let uploadedFilesMeta = [];
 
         for (const file of req.files) {
-            // Uploading file to Cloudinary cloud
+            // Uploading file to Cloudinary cloud storage
             const result = await cloudinary.uploader.upload(file.path, {
                 resource_type: "auto",
                 folder: "voltdrop_vault"
