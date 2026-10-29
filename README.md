@@ -36,12 +36,14 @@ In **Vercel → Project → Settings → Environment Variables**, add:
 Use the same values for Preview and Production environments as needed. Do not put secrets in `index.html`, `NEXT_PUBLIC_*` variables, or GitHub.
 
 ### 3. Deploy
-Replace the repository contents with the contents of this ZIP, commit and push, then redeploy in Vercel. The existing `vercel.json` routes requests to the Express function.
+Replace the repository contents with the contents of this ZIP, commit and push, then redeploy in Vercel. The `api/[...path].js` catch-all function routes `/api/*` requests to Express; the static homepage remains `index.html`. Do not add a catch-all rewrite sending every URL to `index.html` or `/server.js`.
 
 ### 4. Verify configuration
 Open `https://YOUR-DEPLOYMENT/api/health`. It should return `ok: true` and an empty `missing` array. If not, fix the listed environment variables and redeploy.
 
 ## Test checklist
+
+Before uploading a real file, open `https://YOUR-DEPLOYMENT/api/health`. It must return JSON (not an HTML page) and show `ok: true`. If it returns HTML/404, verify Vercel Project Settings → Build & Development Settings → Root Directory points to the folder containing `index.html`, `server.js`, `package.json`, `vercel.json`, and `api/`.
 
 1. Open the app and upload one small image or text file.
 2. Wait for the PIN to appear.
