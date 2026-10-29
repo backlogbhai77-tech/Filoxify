@@ -36,10 +36,14 @@ In **Vercel → Project → Settings → Environment Variables**, add:
 Use the same values for Preview and Production environments as needed. Do not put secrets in `index.html`, `NEXT_PUBLIC_*` variables, or GitHub.
 
 ### 3. Deploy
-Replace the repository contents with the contents of this ZIP, commit and push, then redeploy in Vercel. The `api/[...path].js` catch-all function routes `/api/*` requests to Express; the static homepage remains `index.html`. Do not add a catch-all rewrite sending every URL to `index.html` or `/server.js`.
+Replace the repository contents with the contents of this ZIP, commit and push, then redeploy in Vercel. The `api/[...path].js` catch-all function routes general `/api/*` requests to Express. Explicit `api/check/[pin].js` and `api/view/[pin]/[index].js` entry points are also included so the receiver PIN lookup and file-view paths are mapped directly. The receiver UI now detects non-JSON responses and shows a useful HTTP/error preview instead of crashing with `Unexpected token` while parsing HTML/text. Do not add a catch-all rewrite sending every URL to `index.html` or `/server.js`.
 
 ### 4. Verify configuration
 Open `https://YOUR-DEPLOYMENT/api/health`. It should return `ok: true` and an empty `missing` array. If not, fix the listed environment variables and redeploy.
+
+## Receiver API route fix (v4)
+
+This version specifically addresses receiver-side `Unexpected token ... is not valid JSON` errors by adding explicit Vercel function files for `/api/check/:pin` and `/api/view/:pin/:index`, and by safely parsing the receiver lookup response. It does not change the direct Cloudinary upload flow, Redis data format, upload limits, PIN lifetime, or the visual design.
 
 ## Test checklist
 
