@@ -258,7 +258,22 @@ function renderFiles() {
         totalBytes += file.size;
         const item = document.createElement('div');
         item.className = 'file-item';
-        item.innerHTML = `<div class="file-info"><div class="file-name">${file.name}</div><div class="file-size">${formatSize(file.size)}</div></div><button class="file-remove" onclick="removeFile(${index})">✕</button>`;
+        const info = document.createElement('div');
+        info.className = 'file-info';
+        const name = document.createElement('div');
+        name.className = 'file-name';
+        name.textContent = file.name;
+        const size = document.createElement('div');
+        size.className = 'file-size';
+        size.textContent = formatSize(file.size);
+        info.append(name, size);
+        const remove = document.createElement('button');
+        remove.className = 'file-remove';
+        remove.type = 'button';
+        remove.textContent = '✕';
+        remove.setAttribute('aria-label', `Remove ${file.name}`);
+        remove.addEventListener('click', () => removeFile(index));
+        item.append(info, remove);
         list.appendChild(item);
     });
     document.getElementById('fileCount').innerText = `${filesQueue.length} file(s)`;
@@ -303,6 +318,8 @@ async function triggerUpload() {
         const startData = await readApiResponse(startResponse);
         if (!startResponse.ok) throw new Error(startData.error || `Could not start upload (HTTP ${startResponse.status})`);
         pin = startData.pin;
+        const uploadToken = startData.uploadToken;
+        if (!uploadToken || !Array.isArray(startData.uploads) || startData.uploads.length !== filesQueue.length) throw new Error('Server returned incomplete upload authorization. Please retry.');
         const uploadedFiles = [];
         let completedBytes = 0;
 
@@ -339,6 +356,7 @@ async function triggerUpload() {
                 name: file.name,
                 type: file.type || 'application/octet-stream',
                 size: file.size,
+                bytes: Number(result.bytes) || file.size,
                 url: result.secure_url,
                 publicId: result.public_id,
                 resourceType: result.resource_type
@@ -353,7 +371,7 @@ async function triggerUpload() {
         const completeResponse = await fetch('/api/complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pin, files: uploadedFiles })
+            body: JSON.stringify({ pin, uploadToken, files: uploadedFiles })
         });
         const completeData = await readApiResponse(completeResponse);
         if (!completeResponse.ok) throw new Error(completeData.error || `Could not save transfer PIN (HTTP ${completeResponse.status})`);
@@ -380,10 +398,11 @@ function triggerTextUpload() {
     filesQueue = [file];
     triggerUpload();
 }
-function copyPin() { navigator.clipboard.writeText(document.getElementById('finalPin').innerText).then(() => showToast('PIN copied!')); }
+function copyPin() { if (!navigator.clipboard) return showToast('Clipboard is unavailable in this browser'); navigator.clipboard.writeText(document.getElementById('finalPin').innerText).then(() => showToast('PIN copied!')).catch(() => showToast('Could not copy PIN; please copy it manually')); }
 function shareDirectLink() {
     const pin = document.getElementById('finalPin').innerText;
-    navigator.clipboard.writeText(`${window.location.origin}/?pin=${pin}`).then(() => showToast('Link copied!'));
+    if (!navigator.clipboard) return showToast('Clipboard is unavailable in this browser');
+    navigator.clipboard.writeText(`${window.location.origin}/?pin=${pin}`).then(() => showToast('Link copied!')).catch(() => showToast('Could not copy link; please copy it manually'));
 }
 async function verifyAndFetchVault() {
     const pin = document.getElementById('pinInput').value.trim();
