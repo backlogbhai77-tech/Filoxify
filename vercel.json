@@ -1,8 +1,27 @@
 {
   "version": 2,
   "functions": {
-    "api/[...path].js": { "maxDuration": 60, "memory": 1024 },
-    "api/check/[pin].js": { "maxDuration": 30, "memory": 1024 },
-    "api/view/[pin]/[index].js": { "maxDuration": 30, "memory": 1024 }
-  }
+    "api/[...path].js": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/check/[pin].js": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "api/view/[pin]/[index].js": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "api/cleanup.js": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cleanup",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }
