@@ -395,9 +395,20 @@ async function verifyAndFetchVault() {
     loader.style.display = 'block';
     resultBox.innerHTML = '';
     try {
-        const res = await fetch(`/api/check/${encodeURIComponent(pin)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Invalid key');
+        const res = await fetch(`/api/check/${encodeURIComponent(pin)}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store'
+        });
+        const responseText = await res.text();
+        let data;
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+        } catch (_) {
+            const preview = responseText.replace(/\s+/g, ' ').trim().slice(0, 120);
+            throw new Error(`Receiver API returned a non-JSON response (HTTP ${res.status}). ${preview || 'Check Vercel API routing.'}`);
+        }
+        if (!res.ok) throw new Error(data.error || `Could not retrieve PIN (HTTP ${res.status})`);
         if (!Array.isArray(data.files) || !data.files.length) throw new Error('No files found for this PIN');
         const card = document.createElement('div');
         card.className = 'vault-found-card';
