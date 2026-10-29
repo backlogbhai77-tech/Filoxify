@@ -1,11 +1,12 @@
 {
   "name": "voltdrop",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "PIN-based file and text transfer with Cloudinary storage and Upstash Redis metadata",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.35.3",
