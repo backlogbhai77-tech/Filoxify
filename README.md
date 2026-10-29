@@ -4,7 +4,7 @@ This repair keeps the existing single-page interface and replaces the fragile up
 
 ## What changed
 
-- Files upload directly from the browser to Cloudinary using short-lived signed parameters. Your Cloudinary API secret is never sent to the browser.
+- Files upload directly from the browser to Cloudinary using the configured unsigned upload preset. The API secret is never sent to the browser. Configure preset limits and allowed formats in Cloudinary.
 - PIN metadata is stored in Upstash Redis, not a process-local JavaScript object, so separate Vercel function instances can retrieve the same transfer.
 - Multiple uploaded files are listed on the receive screen.
 - Upload errors from the API and Cloudinary are shown instead of silently failing.
@@ -28,8 +28,8 @@ Create a Redis database in Upstash and copy its REST URL and REST token.
 In **Vercel → Project → Settings → Environment Variables**, add:
 
 - `CLOUDINARY_CLOUD_NAME`
-- `CLOUDINARY_API_KEY`
-- `CLOUDINARY_API_SECRET` (the newly rotated secret)
+- `CLOUDINARY_UPLOAD_PRESET` (for example, `filoxify_upload`; must exactly match your unsigned Cloudinary preset name)
+- `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` may remain configured for future signed/server-side features, but this browser-upload flow does not send them to the browser.
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
 
@@ -60,3 +60,8 @@ Before uploading a real file, open `https://YOUR-DEPLOYMENT/api/health`. It must
 - PINs are four digits for compatibility with the existing UI. They are convenient but have only 9,000 possible values; avoid using this app for confidential or sensitive documents without adding stronger access controls and rate limiting.
 - ZIP bundling is not implemented; files are downloaded individually. The previous `/api/zip` route did not actually create a ZIP.
 - If Cloudinary upload succeeds but saving the metadata fails, an orphaned Cloudinary asset may remain until you clean it up.
+
+
+## Cloudinary upload preset note
+
+This version uses the unsigned preset named by `CLOUDINARY_UPLOAD_PRESET`. In Cloudinary, confirm that the preset is set to **Unsigned** and restrict it to permitted formats and size limits. If Cloudinary still returns HTTP 403 with a missing-permissions message, the restriction is at the Cloudinary product-environment/account level and code changes alone cannot override it.
