@@ -313,11 +313,9 @@ async function triggerUpload() {
             const result = await new Promise((resolve, reject) => {
                 const form = new FormData();
                 form.append('file', file);
-                form.append('api_key', signed.apiKey);
-                form.append('timestamp', String(signed.params.timestamp));
-                form.append('folder', signed.params.folder);
-                form.append('public_id', signed.params.public_id);
-                form.append('signature', signed.signature);
+                form.append('upload_preset', signed.uploadPreset);
+                form.append('folder', signed.folder);
+                form.append('public_id', signed.publicId);
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/auto/upload`);
                 xhr.upload.onprogress = (event) => {
