@@ -121,7 +121,15 @@ input[type=file] { display: none; }
 .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 700; }
 .modal-close { background: transparent; color: var(--muted); font-size: 18px; }
 .modal-body { padding: 12px; display: flex; justify-content: center; align-items: center; background: #000; max-height: 400px; }
-.modal-body img, .modal-body video { max-width: 100%; max-height: 380px; object-fit: contain; }
+.modal-body img, .modal-body video { max-width: 100%; max-height: min(65vh, 560px); object-fit: contain; }
+.modal-body { min-height: 120px; max-height: 70vh; overflow:auto; }
+.receiver-tools { display:flex; gap:8px; margin: 10px 0 12px; }
+.receiver-tools .btn-secondary { min-height:40px; }
+.receiver-expiry { color:var(--warning); font-size:11px; margin: 0 0 12px; text-align:center; }
+.receiver-file-actions { display:flex; gap:6px; flex-shrink:0; }
+.receiver-file-actions .btn-secondary { padding:8px 10px; min-width:74px; }
+.preview-text { width:100%; max-height:65vh; overflow:auto; padding:14px; color:#dbeafe; background:#05070b; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 'JetBrains Mono',monospace; }
+@media (max-width:380px) { .receiver-file-actions { flex-direction:column; } .receiver-file-actions .btn-secondary { min-width:68px; } }
 .progress-card { display: none; margin-top: 14px; padding: 12px; background: var(--surface2); border-radius: 12px; border: 1px solid var(--border); }
 .progress-top { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 .progress-percent { font-weight: 700; color: var(--primary); }
@@ -217,7 +225,7 @@ input[type=file] { display: none; }
 <div class="modal-overlay" id="previewModal" onclick="closeModal()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="modal-header"><span id="modalFileName">Preview</span><button class="modal-close" onclick="closeModal()">✕</button></div>
-        <div class="modal-body" id="modalMedia"></div>
+        <div class="modal-body" id="modalMedia"></div><div style="padding:10px 12px;"><a id="modalDownload" class="btn-secondary" href="#" style="text-decoration:none;">Download file</a></div>
     </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -588,6 +596,91 @@ function shareDirectLink() {
     if (!navigator.clipboard) return showToast('Clipboard is unavailable in this browser');
     navigator.clipboard.writeText(`${window.location.origin}/?pin=${pin}`).then(() => showToast('Link copied!')).catch(() => showToast('Could not copy link; please copy it manually'));
 }
+let receiverExpiryTimer = null;
+let activeReceiverPin = '';
+function getFileKind(file) {
+    const name = String(file.name || '').toLowerCase();
+    const type = String(file.type || '').toLowerCase();
+    if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif)$/.test(name)) return 'image';
+    if (type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)$/.test(name)) return 'video';
+    if (/\.(txt|md|json|js|mjs|cjs|ts|tsx|jsx|css|html|xml|csv|ya?ml|log|py|sh|sql|toml|ini|env)$/.test(name) || type.startsWith('text/')) return 'text';
+    return 'file';
+}
+function closeModal() {
+    const modal = document.getElementById('previewModal');
+    modal.style.display = 'none';
+    const media = document.getElementById('modalMedia');
+    media.replaceChildren();
+}
+async function openReceiverPreview(pin, file, index) {
+    const modal = document.getElementById('previewModal');
+    const media = document.getElementById('modalMedia');
+    media.replaceChildren();
+    document.getElementById('modalFileName').textContent = file.name || `File ${index + 1}`;
+    document.getElementById('modalDownload').href = `/api/view/${encodeURIComponent(pin)}/${index}`;
+    const kind = getFileKind(file);
+    if (kind === 'image') {
+        const img = document.createElement('img');
+        img.alt = file.name || 'Image preview';
+        img.src = `/api/view/${encodeURIComponent(pin)}/${index}`;
+        media.appendChild(img);
+    } else if (kind === 'video') {
+        const video = document.createElement('video');
+        video.src = `/api/view/${encodeURIComponent(pin)}/${index}`;
+        video.controls = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.style.width = '100%';
+        media.appendChild(video);
+    } else if (kind === 'text') {
+        const loading = document.createElement('div');
+        loading.className = 'preview-text';
+        loading.textContent = 'Loading text preview…';
+        media.appendChild(loading);
+        modal.style.display = 'flex';
+        try {
+            const response = await fetch(`/api/preview/${encodeURIComponent(pin)}/${index}`, { cache: 'no-store' });
+            if (!response.ok) {
+                let message = 'Preview unavailable. Use Download file.';
+                try { const err = await response.json(); message = err.error || message; } catch (_) {}
+                loading.textContent = message;
+            } else {
+                loading.textContent = await response.text();
+            }
+        } catch (_) { loading.textContent = 'Preview unavailable. Check your connection or download the file.'; }
+        return;
+    } else {
+        const message = document.createElement('div');
+        message.style.cssText = 'padding:28px 16px;text-align:center;color:#cbd5e1;font-size:13px;line-height:1.6';
+        message.textContent = 'Preview is not available for this file type. Download it to open in a compatible app.';
+        media.appendChild(message);
+    }
+    modal.style.display = 'flex';
+}
+function startReceiverExpiry(seconds) {
+    if (receiverExpiryTimer) clearInterval(receiverExpiryTimer);
+    const label = document.getElementById('receiverExpiry');
+    if (!label || !Number.isFinite(Number(seconds))) return;
+    let remaining = Math.max(0, Number(seconds));
+    const update = () => {
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        label.textContent = remaining > 0 ? `Transfer expires in ${mins}:${String(secs).padStart(2, '0')}` : 'This transfer has expired. Fetch a new PIN from the sender.';
+        if (remaining <= 0) { clearInterval(receiverExpiryTimer); receiverExpiryTimer = null; }
+        remaining--;
+    };
+    update();
+    receiverExpiryTimer = setInterval(update, 1000);
+}
+async function shareReceiverPin(pin) {
+    const shareData = { title: 'Filoxify file transfer', text: `Files shared with PIN ${pin}`, url: `${window.location.origin}/?pin=${encodeURIComponent(pin)}` };
+    if (navigator.share) {
+        try { await navigator.share(shareData); } catch (err) { if (err && err.name !== 'AbortError') showToast('Could not open sharing menu'); }
+    } else {
+        try { await navigator.clipboard.writeText(shareData.url); showToast('Transfer link copied'); }
+        catch (_) { showToast(`Share this link: ${shareData.url}`); }
+    }
+}
 async function verifyAndFetchVault() {
     const pin = document.getElementById('pinInput').value.trim();
     if (!/^\d{4}$/.test(pin)) return showToast('Enter valid 4-digit key');
@@ -596,71 +689,51 @@ async function verifyAndFetchVault() {
     const resultBox = document.getElementById('downloadResult');
     btn.disabled = true;
     loader.style.display = 'block';
-    resultBox.innerHTML = '';
+    resultBox.replaceChildren();
     try {
-        const res = await fetch(`/api/check/${encodeURIComponent(pin)}`, {
-            method: 'GET',
-            headers: { 'Accept': 'application/json' },
-            cache: 'no-store'
-        });
+        const res = await fetch(`/api/check/${encodeURIComponent(pin)}`, { method: 'GET', headers: { 'Accept': 'application/json' }, cache: 'no-store' });
         const responseText = await res.text();
         let data;
-        try {
-            data = responseText ? JSON.parse(responseText) : {};
-        } catch (_) {
-            const preview = responseText.replace(/\s+/g, ' ').trim().slice(0, 120);
-            throw new Error(`Receiver API returned a non-JSON response (HTTP ${res.status}). ${preview || 'Check Vercel API routing.'}`);
-        }
+        try { data = responseText ? JSON.parse(responseText) : {}; }
+        catch (_) { const preview = responseText.replace(/\s+/g, ' ').trim().slice(0, 120); throw new Error(`Receiver API returned a non-JSON response (HTTP ${res.status}). ${preview || 'Check Vercel API routing.'}`); }
         if (!res.ok) throw new Error(data.error || `Could not retrieve PIN (HTTP ${res.status})`);
         if (!Array.isArray(data.files) || !data.files.length) throw new Error('No files found for this PIN');
-        const card = document.createElement('div');
-        card.className = 'vault-found-card';
-        const header = document.createElement('div');
-        header.className = 'vault-found-header';
-        const label = document.createElement('span');
-        label.textContent = `${data.files.length} file(s) ready`;
-        const keyLabel = document.createElement('span');
-        keyLabel.textContent = `PIN: ${pin}`;
-        header.append(label, keyLabel);
-        card.appendChild(header);
-
+        activeReceiverPin = pin;
+        const card = document.createElement('div'); card.className = 'vault-found-card';
+        const header = document.createElement('div'); header.className = 'vault-found-header';
+        const label = document.createElement('span'); label.textContent = `${data.files.length} file(s) ready`;
+        const keyLabel = document.createElement('span'); keyLabel.textContent = `PIN: ${pin}`;
+        header.append(label, keyLabel); card.appendChild(header);
+        const expiry = document.createElement('div'); expiry.id = 'receiverExpiry'; expiry.className = 'receiver-expiry';
+        card.appendChild(expiry);
+        const tools = document.createElement('div'); tools.className = 'receiver-tools';
+        const zip = document.createElement('a'); zip.className = 'btn-secondary'; zip.href = `/api/zip/${encodeURIComponent(pin)}`; zip.textContent = 'Download all (.zip)'; zip.style.textDecoration = 'none';
+        const share = document.createElement('button'); share.className = 'btn-secondary'; share.type = 'button'; share.textContent = 'Share link'; share.addEventListener('click', () => shareReceiverPin(pin));
+        tools.append(zip, share); card.appendChild(tools);
         data.files.forEach((file, index) => {
-            const row = document.createElement('div');
-            row.className = 'file-item';
-            const info = document.createElement('div');
-            info.className = 'file-info';
-            const name = document.createElement('div');
-            name.className = 'file-name';
-            name.textContent = file.name || `File ${index + 1}`;
-            const size = document.createElement('div');
-            size.className = 'file-size';
-            size.textContent = formatSize(Number(file.size) || 0);
+            const row = document.createElement('div'); row.className = 'file-item';
+            const previewIcon = document.createElement('div'); previewIcon.className = 'file-preview';
+            previewIcon.textContent = getFileKind(file) === 'image' ? 'IMG' : getFileKind(file) === 'video' ? 'VID' : getFileKind(file) === 'text' ? 'TXT' : 'FILE';
+            const info = document.createElement('div'); info.className = 'file-info';
+            const name = document.createElement('div'); name.className = 'file-name'; name.textContent = file.name || `File ${index + 1}`;
+            const size = document.createElement('div'); size.className = 'file-size'; size.textContent = `${formatSize(Number(file.size) || 0)} · ${getFileKind(file) === 'file' ? 'Download' : 'Preview available'}`;
             info.append(name, size);
-            const link = document.createElement('a');
-            link.className = 'btn-secondary';
-            link.href = `/api/view/${encodeURIComponent(pin)}/${index}`;
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.textContent = 'Open / Download';
-            link.style.textDecoration = 'none';
-            link.style.display = 'inline-flex';
-            link.style.alignItems = 'center';
-            link.style.justifyContent = 'center';
-            row.append(info, link);
-            card.appendChild(row);
+            const actions = document.createElement('div'); actions.className = 'receiver-file-actions';
+            const preview = document.createElement('button'); preview.className = 'btn-secondary'; preview.type = 'button'; preview.textContent = 'Preview'; preview.addEventListener('click', () => openReceiverPreview(pin, file, index));
+            const link = document.createElement('a'); link.className = 'btn-secondary'; link.href = `/api/view/${encodeURIComponent(pin)}/${index}`; link.textContent = 'Download'; link.style.textDecoration = 'none';
+            actions.append(preview, link); row.append(previewIcon, info, actions); card.appendChild(row);
         });
         resultBox.appendChild(card);
-    } catch (e) {
-        showToast(e.message || 'Could not retrieve files');
-    } finally {
-        btn.disabled = false;
-        loader.style.display = 'none';
-    }
+        startReceiverExpiry(Number(data.expiresIn ?? 900));
+    } catch (e) { showToast(e.message || 'Could not retrieve files'); }
+    finally { btn.disabled = false; loader.style.display = 'none'; }
 }
+
 function showToast(msg) {
     const t = document.getElementById('toast'); t.innerText = msg; t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 2500);
 }
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeModal(); });
 window.addEventListener('DOMContentLoaded', () => {
     const pin = new URLSearchParams(window.location.search).get('pin');
     if (pin && /^\d{4}$/.test(pin)) { switchTab('receive'); document.getElementById('pinInput').value = pin; verifyAndFetchVault(); }
