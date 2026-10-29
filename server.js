@@ -83,10 +83,20 @@ async function rateLimit(req, res, bucket, limit, windowSeconds) {
 }
 function asObject(raw) { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
 function normalizePublicId(value) { return String(value || '').replace(/^\/+|\/+$/g, ''); }
-function matchesExpectedPublicId(actual, expected) {
+function matchesExpectedPublicId(actual, expected, resourceType, originalName) {
   const a = normalizePublicId(actual);
   const e = normalizePublicId(expected);
-  return !!a && !!e && (a === e || a.endsWith('/' + e));
+  if (!a || !e) return false;
+  // Cloudinary can append the original file extension to raw assets even when
+  // a server-issued public_id is supplied (common for TXT/PDF/ZIP documents).
+  // Accept only the exact ID, a folder-qualified exact ID, or that ID plus the
+  // extension from the server-reserved filename for raw resources.
+  const candidates = [e];
+  if (resourceType === 'raw') {
+    const match = String(originalName || '').match(/(\.[a-z0-9]{1,10})$/i);
+    if (match) candidates.push(e + match[1]);
+  }
+  return candidates.some(candidate => a === candidate || a.endsWith('/' + candidate));
 }
 function isCloudinaryUrl(value) {
   try {
@@ -239,7 +249,7 @@ app.post('/api/complete', async (req, res) => {
     }
     const safeFiles = files.map((file, index) => {
       const expected = current.expectedFiles[index];
-      if (!file || !isCloudinaryUrl(file.url) || !matchesExpectedPublicId(file.publicId, expected.publicId)) {
+      if (!file || !isCloudinaryUrl(file.url) || !matchesExpectedPublicId(file.publicId, expected.publicId, expected.expectedResourceType, expected.name)) {
         throw new Error('A returned asset did not match the server-issued upload identifiers.');
       }
       const actualSize = Number(file.bytes);
