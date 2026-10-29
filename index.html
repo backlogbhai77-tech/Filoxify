@@ -81,6 +81,16 @@ input[type=file] { display: none; }
 .file-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-size { color: var(--muted2); font-size: 10px; margin-top: 2px; }
 .file-remove { background: transparent; color: var(--muted2); padding: 4px; border-radius: 6px; }
+.file-upload-meta { margin-top: 7px; }
+.file-upload-top { display:flex; justify-content:space-between; gap:8px; font-size:10px; color:var(--muted); }
+.file-progress-track { height:4px; border-radius:99px; background:var(--surface3); overflow:hidden; margin-top:5px; }
+.file-progress-fill { width:0%; height:100%; background:linear-gradient(90deg,var(--primary),var(--accent)); transition:width .12s linear; }
+.file-actions { display:flex; gap:5px; flex-shrink:0; }
+.file-action { padding:6px 8px; border-radius:7px; font-size:10px; font-weight:700; background:var(--surface3); color:var(--text); }
+.file-action:disabled { opacity:.45; }
+.upload-toolbar { display:flex; gap:8px; margin-top:8px; }
+.upload-toolbar .btn-secondary { cursor:pointer; }
+.upload-note { color:var(--muted); font-size:10px; line-height:1.5; margin-top:7px; }
 .cta { width: 100%; height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; margin-top: 14px; background: linear-gradient(135deg, var(--primary), var(--accent)); border-radius: 12px; color: #fff; font-size: 13px; font-weight: 700; box-shadow: 0 4px 20px var(--accent-glow); }
 .cta svg { width: 16px !important; height: 16px !important; }
 .cta:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -127,13 +137,13 @@ input[type=file] { display: none; }
         </div>
         <div class="header-actions">
             <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn"><svg id="themeIcon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg></button>
-            <div class="status"><span class="status-dot"></span>Ready (100MB)</div>
+            <div class="status"><span class="status-dot"></span><span id="limitBadge">Ready (100MB)</span></div>
         </div>
     </header>
     <section class="hero">
         <div class="hero-badge">Direct Relay</div>
         <h1>Transfer files & text <span>anywhere.</span></h1>
-        <p>Share files up to 100 MB per transfer using a PIN.</p>
+        <p id="heroLimitText">Share files up to 100 MB per transfer using a PIN.</p>
     </section>
     <main class="card">
         <div class="tabs">
@@ -173,6 +183,8 @@ input[type=file] { display: none; }
             <div class="progress-card" id="progressCard">
                 <div class="progress-top"><span id="progressStatus">Uploading...</span><span class="progress-percent" id="percentText">0%</span></div>
                 <div class="progress-track"><div class="progress-fill" id="progressBar"></div></div>
+                <div class="upload-toolbar"><button class="btn-secondary" id="cancelUploadBtn" type="button" onclick="cancelAllUploads()">Cancel upload</button></div>
+                <div class="upload-note" id="uploadNote">Up to 3 files upload at once. Keep this page open until the PIN is ready.</div>
             </div>
             <div class="pin-result" id="pinResult">
                 <div class="ready-label">Transfer Key Ready</div>
@@ -203,6 +215,24 @@ input[type=file] { display: none; }
 <div class="toast" id="toast"></div>
 <script>
 let filesQueue = [];
+const MAX_FILES = 20;
+const PROVIDER_MAX_BYTES = 100 * 1024 * 1024; // Cloudinary upload limit used by this app; don't raise without verifying your account.
+let uploadLimits = { maxFileBytes: PROVIDER_MAX_BYTES, maxTotalBytes: PROVIDER_MAX_BYTES, maxFiles: MAX_FILES };
+let uploadSession = null;
+let uploadInProgress = false;
+const UPLOAD_CONCURRENCY = 3;
+async function loadUploadLimits() {
+    try {
+        const res = await fetch('/api/config', { cache: 'no-store' });
+        const data = await readApiResponse(res);
+        if (res.ok && data.limits) uploadLimits = data.limits;
+    } catch (_) {}
+    const mb = Math.max(1, Math.floor(uploadLimits.maxTotalBytes / 1048576));
+    document.getElementById('limitBadge').textContent = `Ready (${mb}MB)`;
+    document.getElementById('heroLimitText').textContent = `Share files up to ${mb} MB per transfer using a PIN.`;
+    document.getElementById('dropTitle').textContent = `Choose or drop files (Max ${Math.floor(uploadLimits.maxFileBytes / 1048576)}MB per file)`;
+}
+loadUploadLimits();
 function initTheme() { const saved = localStorage.getItem('vd_theme') || 'dark'; document.documentElement.setAttribute('data-theme', saved); }
 initTheme();
 function toggleTheme() {
@@ -230,6 +260,7 @@ function updateCharCount() {
 function clearEditor() { document.getElementById('textInputContent').value = ''; updateCharCount(); }
 const fileInput = document.getElementById('fileInput');
 fileInput.addEventListener('change', function() {
+    if (uploadInProgress) { showToast('Wait for current upload to finish or cancel it first'); this.value = ''; return; }
     if (!this.files.length) return;
     filesQueue = [...filesQueue, ...Array.from(this.files)];
     renderFiles();
@@ -238,10 +269,11 @@ fileInput.addEventListener('change', function() {
 const dropzone = document.getElementById('dropzone');
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropzone.addEventListener(e, ev => ev.preventDefault()));
 dropzone.addEventListener('drop', e => {
+    if (uploadInProgress) { showToast('Wait for current upload to finish or cancel it first'); return; }
     const files = Array.from(e.dataTransfer.files);
     if (files.length) { filesQueue = [...filesQueue, ...files]; renderFiles(); }
 });
-function removeFile(i) { filesQueue.splice(i, 1); renderFiles(); }
+function removeFile(i) { if (uploadInProgress) return showToast("Wait for upload to finish or cancel it first"); filesQueue.splice(i, 1); renderFiles(); }
 function formatSize(b) {
     if (b < 1024) return b + ' B';
     if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
@@ -273,7 +305,23 @@ function renderFiles() {
         remove.textContent = '✕';
         remove.setAttribute('aria-label', `Remove ${file.name}`);
         remove.addEventListener('click', () => removeFile(index));
-        item.append(info, remove);
+        const uploadMeta = document.createElement('div');
+        uploadMeta.className = 'file-upload-meta';
+        uploadMeta.id = `fileMeta-${index}`;
+        uploadMeta.style.display = 'none';
+        const top = document.createElement('div');
+        top.className = 'file-upload-top';
+        const status = document.createElement('span'); status.id = `fileStatus-${index}`; status.textContent = 'Queued';
+        const pct = document.createElement('span'); pct.id = `filePct-${index}`; pct.textContent = '0%';
+        top.append(status, pct);
+        const track = document.createElement('div'); track.className = 'file-progress-track';
+        const fill = document.createElement('div'); fill.className = 'file-progress-fill'; fill.id = `fileBar-${index}`;
+        track.appendChild(fill); uploadMeta.append(top, track);
+        const actions = document.createElement('div'); actions.className = 'file-actions';
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'file-action'; retry.textContent = 'Retry'; retry.id = `retry-${index}`; retry.style.display = 'none'; retry.addEventListener('click', () => retryFileUpload(index));
+        const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'file-action'; cancel.textContent = 'Cancel'; cancel.id = `cancel-${index}`; cancel.style.display = 'none'; cancel.addEventListener('click', () => cancelFileUpload(index));
+        actions.append(retry, cancel);
+        item.append(info, uploadMeta, actions, remove);
         list.appendChild(item);
     });
     document.getElementById('fileCount').innerText = `${filesQueue.length} file(s)`;
@@ -288,106 +336,185 @@ async function readApiResponse(response) {
         throw new Error(`API returned HTML/non-JSON (HTTP ${response.status}). Check Vercel API routing/deployment. ${preview}`);
     }
 }
-async function triggerUpload() {
-    if (!filesQueue.length) return showToast('Add files first');
-    const MAX_FILE = 100 * 1024 * 1024;
-    const totalBytes = filesQueue.reduce((sum, f) => sum + f.size, 0);
-    if (filesQueue.some(f => f.size > MAX_FILE)) return showToast('Each file must be 100 MB or smaller');
-    if (totalBytes > MAX_FILE) return showToast('Total transfer size must be 100 MB or smaller');
-    if (filesQueue.length > 20) return showToast('Maximum 20 files per transfer');
-
-    const uploadBtn = document.getElementById('uploadBtn');
-    const progressCard = document.getElementById('progressCard');
-    const progressBar = document.getElementById('progressBar');
-    const percentText = document.getElementById('percentText');
-    const progressStatus = document.getElementById('progressStatus');
-    uploadBtn.disabled = true;
-    progressCard.style.display = 'block';
-    document.getElementById('pinResult').style.display = 'none';
-    progressBar.style.width = '0%';
-    percentText.innerText = '0%';
-    let pin = '';
-
+function setFileStatus(index, status, percent) {
+    const meta = document.getElementById(`fileMeta-${index}`);
+    if (!meta) return;
+    meta.style.display = 'block';
+    const statusEl = document.getElementById(`fileStatus-${index}`);
+    const pctEl = document.getElementById(`filePct-${index}`);
+    const bar = document.getElementById(`fileBar-${index}`);
+    const retry = document.getElementById(`retry-${index}`);
+    const cancel = document.getElementById(`cancel-${index}`);
+    if (statusEl) statusEl.textContent = status;
+    if (pctEl) pctEl.textContent = `${Math.round(percent || 0)}%`;
+    if (bar) bar.style.width = `${Math.max(0, Math.min(100, percent || 0))}%`;
+    if (retry) retry.style.display = status === 'Failed' || status === 'Cancelled' ? 'inline-block' : 'none';
+    if (cancel) cancel.style.display = status === 'Uploading' ? 'inline-block' : 'none';
+}
+function updateOverallProgress() {
+    if (!uploadSession) return;
+    const { files, progressBytes, totalBytes } = uploadSession;
+    const sent = files.reduce((sum, _, i) => sum + Math.min(files[i].size, progressBytes[i] || 0), 0);
+    const percent = totalBytes ? Math.round(sent / totalBytes * 95) : 0;
+    document.getElementById('progressBar').style.width = `${percent}%`;
+    document.getElementById('percentText').textContent = `${Math.min(95, percent)}%`;
+    const done = files.filter((_, i) => uploadSession.uploadedFiles[i]).length;
+    document.getElementById('progressStatus').textContent = `Uploaded ${done} of ${files.length} files`;
+}
+function uploadOne(index) {
+    return new Promise((resolve, reject) => {
+        const session = uploadSession;
+        if (!session || session.cancelled) return reject(new Error('Upload cancelled'));
+        const file = session.files[index];
+        const signed = session.startData.uploads[index];
+        const form = new FormData();
+        form.append('file', file);
+        form.append('upload_preset', signed.uploadPreset);
+        form.append('folder', signed.folder);
+        form.append('public_id', signed.publicId);
+        const xhr = new XMLHttpRequest();
+        session.activeXhrs.set(index, xhr);
+        setFileStatus(index, 'Uploading', 0);
+        document.getElementById(`retry-${index}`).style.display = 'none';
+        xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/auto/upload`);
+        xhr.timeout = 0; // Large videos on slow mobile networks can take time; cancellation remains available.
+        xhr.upload.onprogress = event => {
+            if (!event.lengthComputable || !uploadSession) return;
+            session.progressBytes[index] = Math.min(file.size, event.loaded);
+            const pct = Math.min(99, Math.round(event.loaded / Math.max(1, event.total) * 100));
+            setFileStatus(index, 'Uploading', pct);
+            updateOverallProgress();
+        };
+        xhr.onload = () => {
+            session.activeXhrs.delete(index);
+            let body = {};
+            try { body = JSON.parse(xhr.responseText || '{}'); } catch (_) {}
+            if (xhr.status >= 200 && xhr.status < 300 && body.secure_url) {
+                session.progressBytes[index] = file.size;
+                session.uploadedFiles[index] = {
+                    name: file.name, type: file.type || 'application/octet-stream', size: file.size,
+                    bytes: Number(body.bytes) || file.size, url: body.secure_url,
+                    publicId: body.public_id, resourceType: body.resource_type
+                };
+                setFileStatus(index, 'Uploaded', 100); updateOverallProgress(); resolve(body);
+            } else {
+                session.progressBytes[index] = 0;
+                const message = body.error && body.error.message ? body.error.message : `Cloudinary rejected ${file.name} (${xhr.status})`;
+                setFileStatus(index, 'Failed', 0); updateOverallProgress(); reject(new Error(message));
+            }
+        };
+        xhr.onerror = () => { session.activeXhrs.delete(index); session.progressBytes[index] = 0; setFileStatus(index, 'Failed', 0); updateOverallProgress(); reject(new Error('Network error. Check connection and retry this file.')); };
+        xhr.onabort = () => { session.activeXhrs.delete(index); session.progressBytes[index] = 0; setFileStatus(index, 'Cancelled', 0); updateOverallProgress(); reject(new Error('Upload cancelled')); };
+        xhr.send(form);
+    });
+}
+async function finishTransferIfReady() {
+    const session = uploadSession;
+    if (!session || session.cancelled) return;
+    const missing = session.files.some((_, i) => !session.uploadedFiles[i]);
+    if (missing) {
+        document.getElementById('progressStatus').textContent = 'Some files need retry';
+        document.getElementById('uploadNote').textContent = 'Retry failed files individually. Your successful uploads are kept for this transfer attempt.';
+        return;
+    }
+    document.getElementById('progressStatus').textContent = 'Saving transfer PIN...';
     try {
-        progressStatus.innerText = 'Preparing secure upload...';
+        const response = await fetch('/api/complete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin: session.startData.pin, uploadToken: session.startData.uploadToken, files: session.uploadedFiles })
+        });
+        const data = await readApiResponse(response);
+        if (!response.ok) throw new Error(data.error || `Could not save transfer PIN (HTTP ${response.status})`);
+        document.getElementById('progressBar').style.width = '100%';
+        document.getElementById('percentText').textContent = '100%';
+        document.getElementById('progressStatus').textContent = 'Transfer ready';
+        document.getElementById('finalPin').textContent = session.startData.pin;
+        document.getElementById('pinResult').style.display = 'block';
+        document.getElementById('expiryTimer').textContent = 'Expires in 15 minutes';
+        document.getElementById('uploadNote').textContent = 'All files uploaded successfully.';
+        document.getElementById('cancelUploadBtn').textContent = 'Upload complete';
+        document.getElementById('cancelUploadBtn').disabled = true;
+        showToast('Transfer ready! Share this PIN.');
+    } catch (error) {
+        document.getElementById('progressStatus').textContent = 'Could not finalize transfer';
+        showToast(error.message || 'Could not save transfer PIN. Retry is safe for this upload session.');
+    }
+}
+async function retryFileUpload(index) {
+    if (!uploadSession || uploadSession.cancelled || uploadSession.activeXhrs.has(index)) return;
+    const session = uploadSession;
+    try {
+        await uploadOne(index);
+        if (session.files.every((_, i) => session.uploadedFiles[i])) await finishTransferIfReady();
+    } catch (error) {
+        if (error.message !== 'Upload cancelled') showToast(`${session.files[index].name}: ${error.message}`);
+    }
+}
+function cancelFileUpload(index) {
+    if (!uploadSession) return;
+    const xhr = uploadSession.activeXhrs.get(index);
+    if (xhr) xhr.abort();
+}
+function cancelAllUploads() {
+    if (!uploadSession) return;
+    uploadSession.cancelled = true;
+    for (const xhr of uploadSession.activeXhrs.values()) xhr.abort();
+    document.getElementById('progressStatus').textContent = 'Upload cancelled';
+    document.getElementById('uploadNote').textContent = 'Transfer cancelled. Start again to create a new PIN.';
+    showToast('Upload cancelled');
+}
+async function triggerUpload() {
+    if (uploadInProgress) return showToast('An upload is already running');
+    if (!filesQueue.length) return showToast('Add files first');
+    const totalBytes = filesQueue.reduce((sum, f) => sum + f.size, 0);
+    if (filesQueue.some(f => f.size > uploadLimits.maxFileBytes)) return showToast(`Each file must be ${Math.floor(uploadLimits.maxFileBytes / 1048576)} MB or smaller`);
+    if (totalBytes > uploadLimits.maxTotalBytes) return showToast(`Total transfer size must be ${Math.floor(uploadLimits.maxTotalBytes / 1048576)} MB or smaller`);
+    if (filesQueue.length > uploadLimits.maxFiles) return showToast(`Maximum ${uploadLimits.maxFiles} files per transfer`);
+    const uploadBtn = document.getElementById('uploadBtn');
+    uploadInProgress = true; uploadBtn.disabled = true;
+    document.getElementById('cancelUploadBtn').textContent = 'Cancel upload';
+    document.getElementById('cancelUploadBtn').disabled = false;
+    document.getElementById('progressCard').style.display = 'block';
+    document.getElementById('pinResult').style.display = 'none';
+    document.getElementById('progressBar').style.width = '0%';
+    document.getElementById('percentText').textContent = '0%';
+    document.getElementById('uploadNote').textContent = `Uploading up to ${UPLOAD_CONCURRENCY} files at once. Keep this page open.`;
+    const files = filesQueue.slice();
+    uploadSession = { files, totalBytes, progressBytes: files.map(() => 0), uploadedFiles: files.map(() => null), activeXhrs: new Map(), cancelled: false, startData: null, nextIndex: 0 };
+    files.forEach((_, i) => setFileStatus(i, 'Queued', 0));
+    try {
+        document.getElementById('progressStatus').textContent = 'Preparing secure upload...';
         const startResponse = await fetch('/api/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesQueue.map(f => ({ name: f.name, type: f.type, size: f.size })) })
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: files.map(f => ({ name: f.name, type: f.type, size: f.size })) })
         });
         const startData = await readApiResponse(startResponse);
         if (!startResponse.ok) throw new Error(startData.error || `Could not start upload (HTTP ${startResponse.status})`);
-        pin = startData.pin;
-        const uploadToken = startData.uploadToken;
-        if (!uploadToken || !Array.isArray(startData.uploads) || startData.uploads.length !== filesQueue.length) throw new Error('Server returned incomplete upload authorization. Please retry.');
-        const uploadedFiles = [];
-        let completedBytes = 0;
-
-        for (let i = 0; i < filesQueue.length; i++) {
-            const file = filesQueue[i];
-            const signed = startData.uploads[i];
-            progressStatus.innerText = `Uploading ${i + 1} of ${filesQueue.length}: ${file.name}`;
-            const result = await new Promise((resolve, reject) => {
-                const form = new FormData();
-                form.append('file', file);
-                form.append('upload_preset', signed.uploadPreset);
-                form.append('folder', signed.folder);
-                form.append('public_id', signed.publicId);
-                const xhr = new XMLHttpRequest();
-                xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/auto/upload`);
-                xhr.upload.onprogress = (event) => {
-                    if (!event.lengthComputable) return;
-                    const current = Math.min(event.loaded, file.size);
-                    const percent = totalBytes ? Math.round(((completedBytes + current) / totalBytes) * 90) : 90;
-                    progressBar.style.width = percent + '%';
-                    percentText.innerText = percent + '%';
-                };
-                xhr.onload = () => {
-                    let body = {};
-                    try { body = JSON.parse(xhr.responseText || '{}'); } catch (_) {}
-                    if (xhr.status >= 200 && xhr.status < 300 && body.secure_url) resolve(body);
-                    else reject(new Error(body.error && body.error.message ? body.error.message : `Cloudinary rejected ${file.name} (${xhr.status})`));
-                };
-                xhr.onerror = () => reject(new Error('Network error while uploading to Cloudinary'));
-                xhr.onabort = () => reject(new Error('Upload cancelled'));
-                xhr.send(form);
-            });
-            uploadedFiles.push({
-                name: file.name,
-                type: file.type || 'application/octet-stream',
-                size: file.size,
-                bytes: Number(result.bytes) || file.size,
-                url: result.secure_url,
-                publicId: result.public_id,
-                resourceType: result.resource_type
-            });
-            completedBytes += file.size;
-            const percent = totalBytes ? Math.round((completedBytes / totalBytes) * 90) : 90;
-            progressBar.style.width = percent + '%';
-            percentText.innerText = percent + '%';
-        }
-
-        progressStatus.innerText = 'Saving transfer PIN...';
-        const completeResponse = await fetch('/api/complete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pin, uploadToken, files: uploadedFiles })
-        });
-        const completeData = await readApiResponse(completeResponse);
-        if (!completeResponse.ok) throw new Error(completeData.error || `Could not save transfer PIN (HTTP ${completeResponse.status})`);
-
-        progressBar.style.width = '100%';
-        percentText.innerText = '100%';
-        document.getElementById('finalPin').innerText = pin;
-        document.getElementById('pinResult').style.display = 'block';
-        document.getElementById('expiryTimer').innerText = 'Expires in 15 minutes';
-        showToast('Transfer ready! Share this PIN.');
+        if (uploadSession.cancelled) return;
+        if (!startData.uploadToken || !Array.isArray(startData.uploads) || startData.uploads.length !== files.length) throw new Error('Server returned incomplete upload authorization. Please retry.');
+        uploadSession.startData = startData;
+        const worker = async () => {
+            while (true) {
+                if (!uploadSession || uploadSession.cancelled) return;
+                const index = uploadSession.nextIndex++;
+                if (index >= files.length) return;
+                try { await uploadOne(index); }
+                catch (error) { if (error.message !== 'Upload cancelled') showToast(`${files[index].name}: ${error.message}`); }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, worker));
+        if (!uploadSession.cancelled) await finishTransferIfReady();
     } catch (error) {
-        console.error('Upload failed:', error);
-        showToast(error.message || 'Upload failed. Please try again.');
+        if (!uploadSession || !uploadSession.cancelled) {
+            document.getElementById('progressStatus').textContent = 'Upload setup failed';
+            showToast(error.message || 'Upload failed. Please try again.');
+        }
     } finally {
+        uploadInProgress = false;
         uploadBtn.disabled = false;
-        setTimeout(() => { progressCard.style.display = 'none'; }, 800);
+        if (uploadSession && !uploadSession.cancelled && uploadSession.files.every((_, i) => uploadSession.uploadedFiles[i])) {
+            document.getElementById('cancelUploadBtn').textContent = 'Done';
+        }
     }
 }
 function triggerTextUpload() {
@@ -396,6 +523,7 @@ function triggerTextUpload() {
     const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
     const file = new File([blob], `snippet_${Math.floor(1000+Math.random()*9000)}.txt`, { type: 'text/plain' });
     filesQueue = [file];
+    renderFiles();
     triggerUpload();
 }
 function copyPin() { if (!navigator.clipboard) return showToast('Clipboard is unavailable in this browser'); navigator.clipboard.writeText(document.getElementById('finalPin').innerText).then(() => showToast('PIN copied!')).catch(() => showToast('Could not copy PIN; please copy it manually')); }
