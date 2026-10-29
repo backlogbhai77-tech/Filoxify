@@ -2,6 +2,8 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const cloudinary = require('cloudinary').v2;
+const archiver = require('archiver');
+const { Readable } = require('stream');
 const { Redis } = require('@upstash/redis');
 
 const app = express();
@@ -287,10 +289,48 @@ app.get('/api/check/:pin', async (req, res) => {
     const item = asObject(raw);
     if (item.status !== 'ready' || !Array.isArray(item.files) || !item.files.length) return res.status(409).json({ error: 'Upload is still processing. Try again shortly.' });
     res.set('Cache-Control', 'no-store');
-    res.json({ files: item.files.map((file, index) => ({ name: file.name, type: file.type, size: file.size, index })) });
+    res.json({ files: item.files.map((file, index) => ({ name: file.name, type: file.type, size: file.size, index })), expiresAt: item.expiresAt || null, expiresIn: Math.max(0, Math.ceil(((item.expiresAt || (item.createdAt + VAULT_TTL_SECONDS * 1000)) - Date.now()) / 1000)) });
   } catch (err) {
     console.error('PIN lookup failed:', err.message);
     res.status(500).json({ error: 'Could not retrieve transfer. Please try again.' });
+  }
+});
+
+app.get('/api/preview/:pin/:index', async (req, res) => {
+  if (!assertConfigured(res)) return;
+  if (!(await rateLimit(req, res, 'preview', 30, 60))) return;
+  const { pin } = req.params;
+  const index = Number(req.params.index);
+  if (!validPin(pin) || !Number.isInteger(index) || index < 0 || index >= MAX_FILES) return res.status(400).json({ error: 'Invalid preview link.' });
+  try {
+    const raw = await redis.get(PIN_KEY(pin));
+    if (!raw) return res.status(404).json({ error: 'Transfer expired or PIN not found.' });
+    const item = asObject(raw);
+    const file = item.files && item.files[index];
+    const ext = String(file && file.name || '').split('.').pop().toLowerCase();
+    const allowed = new Set(['txt','md','json','js','mjs','cjs','ts','tsx','jsx','css','html','xml','csv','yaml','yml','log','py','sh','sql','toml','ini','env']);
+    if (item.status !== 'ready' || !file || !file.url || !isCloudinaryUrl(file.url)) return res.status(404).json({ error: 'File not found.' });
+    if (!allowed.has(ext)) return res.status(415).json({ error: 'Inline preview is not available for this file type.' });
+    const upstream = await fetch(file.url, { redirect: 'follow', signal: AbortSignal.timeout(12000) });
+    if (!upstream.ok || !upstream.body) return res.status(502).json({ error: 'Could not load this preview from storage.' });
+    const chunks = [];
+    let total = 0;
+    const reader = upstream.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 1024 * 1024) {
+        await reader.cancel().catch(() => {});
+        return res.status(413).json({ error: 'Text preview is limited to 1 MB. Download the file to view it fully.' });
+      }
+      chunks.push(Buffer.from(value));
+    }
+    res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': 'inline; filename="preview.txt"' });
+    res.send(Buffer.concat(chunks));
+  } catch (err) {
+    console.error('Preview failed:', err.message);
+    if (!res.headersSent) res.status(502).json({ error: 'Could not load preview. Download the file instead.' });
   }
 });
 
@@ -333,6 +373,44 @@ app.get('/api/cleanup', async (req, res) => {
   }
 });
 
-app.get('/api/zip/:pin', (_req, res) => res.status(501).json({ error: 'ZIP bundling is not enabled. Download files individually.' }));
+app.get('/api/zip/:pin', async (req, res) => {
+  if (!assertConfigured(res)) return;
+  if (!(await rateLimit(req, res, 'zip', 4, 60))) return;
+  const { pin } = req.params;
+  if (!validPin(pin)) return res.status(400).json({ error: 'Enter a valid 4-digit PIN.' });
+  try {
+    const raw = await redis.get(PIN_KEY(pin));
+    if (!raw) return res.status(404).json({ error: 'Transfer expired or PIN not found.' });
+    const item = asObject(raw);
+    if (item.status !== 'ready' || !Array.isArray(item.files) || !item.files.length) return res.status(409).json({ error: 'No files are ready to download.' });
+    const files = item.files;
+    if (files.length > MAX_FILES || files.reduce((sum, f) => sum + (Number(f.size) || 0), 0) > MAX_TOTAL_BYTES) return res.status(413).json({ error: 'This transfer is too large to bundle. Download files individually.' });
+    if (files.some(f => !f.url || !isCloudinaryUrl(f.url))) return res.status(400).json({ error: 'A stored file URL failed security validation.' });
+    const firstResponse = await fetch(files[0].url, { redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    if (!firstResponse.ok || !firstResponse.body) return res.status(502).json({ error: 'Could not retrieve the first file for ZIP. Download files individually.' });
+    res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="filoxify-${pin}.zip"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    const archive = archiver('zip', { zlib: { level: 1 } });
+    archive.on('warning', err => { if (err.code !== 'ENOENT') { console.error('ZIP warning:', err.message); res.destroy(err); } });
+    archive.on('error', err => { console.error('ZIP generation failed:', err.message); res.destroy(err); });
+    archive.pipe(res);
+    const used = new Set();
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const upstream = i === 0 ? firstResponse : await fetch(file.url, { redirect: 'follow', signal: AbortSignal.timeout(20000) });
+      if (!upstream.ok || !upstream.body) throw new Error(`Could not retrieve file ${i + 1} for ZIP.`);
+      let name = String(file.name || `file-${i + 1}`).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '').slice(0, 160) || `file-${i + 1}`;
+      const base = name;
+      let suffix = 1;
+      while (used.has(name.toLowerCase())) { const dot = base.lastIndexOf('.'); name = dot > 0 ? `${base.slice(0,dot)} (${suffix++})${base.slice(dot)}` : `${base} (${suffix++})`; }
+      used.add(name.toLowerCase());
+      archive.append(Readable.fromWeb(upstream.body), { name });
+    }
+    await archive.finalize();
+  } catch (err) {
+    console.error('ZIP download failed:', err.message);
+    if (!res.headersSent) res.status(502).json({ error: 'Could not create the ZIP. Please download files individually.' });
+    else res.destroy(err);
+  }
+});
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 module.exports = app;
