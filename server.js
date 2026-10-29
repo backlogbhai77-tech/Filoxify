@@ -23,9 +23,15 @@ cloudinary.config({
 
 const VAULT_TTL_SECONDS = 15 * 60;
 const CLEANUP_RECORD_TTL_SECONDS = 7 * 24 * 60 * 60;
-const MAX_FILES = 20;
-const MAX_FILE_BYTES = 100 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+// Cloudinary's configured upload path is capped at 100 MB per file in this app.
+// Environment variables can lower limits to suit an account, but never raise them above this provider cap.
+function boundedMb(value, fallback, max = 100) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.min(max, Math.floor(parsed)) * 1024 * 1024 : fallback * 1024 * 1024;
+}
+const MAX_FILES = Math.max(1, Math.min(20, Number.parseInt(process.env.MAX_FILES || '20', 10) || 20));
+const MAX_FILE_BYTES = boundedMb(process.env.MAX_FILE_MB, 100);
+const MAX_TOTAL_BYTES = Math.min(boundedMb(process.env.MAX_TOTAL_MB, 100), 100 * 1024 * 1024);
 const PIN_KEY = (pin) => `voltdrop:vault:${pin}`;
 const CLEANUP_KEY = (pin) => `voltdrop:cleanup:${pin}`;
 const EXPIRY_INDEX = 'voltdrop:cleanup-index';
@@ -152,6 +158,11 @@ async function cleanupExpiredAssets(maxItems = 10) {
   return { checked: (pins || []).length, deleted };
 }
 
+app.get('/api/config', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ limits: { maxFileBytes: MAX_FILE_BYTES, maxTotalBytes: MAX_TOTAL_BYTES, maxFiles: MAX_FILES } });
+});
+
 app.get('/api/health', async (_req, res) => {
   let redisOk = false;
   try { if (redis) redisOk = (await redis.ping()) === 'PONG'; } catch (_) {}
@@ -174,10 +185,10 @@ app.post('/api/start', async (req, res) => {
     let total = 0;
     for (const file of files) {
       const size = Number(file && file.size);
-      if (!Number.isSafeInteger(size) || size < 1 || size > MAX_FILE_BYTES) return res.status(413).json({ error: 'A file exceeds the configured 100 MB per-file limit or has an invalid size.' });
+      if (!Number.isSafeInteger(size) || size < 1 || size > MAX_FILE_BYTES) return res.status(413).json({ error: `A file exceeds the configured ${Math.floor(MAX_FILE_BYTES / 1048576)} MB per-file limit or has an invalid size.` });
       total += size;
     }
-    if (total > MAX_TOTAL_BYTES) return res.status(413).json({ error: 'Combined file size exceeds the configured 100 MB per-transfer limit.' });
+    if (total > MAX_TOTAL_BYTES) return res.status(413).json({ error: `Combined file size exceeds the configured ${Math.floor(MAX_TOTAL_BYTES / 1048576)} MB per-transfer limit.` });
     if (!process.env.CLOUDINARY_UPLOAD_PRESET) return res.status(503).json({ error: 'Missing CLOUDINARY_UPLOAD_PRESET in Vercel environment variables.' });
 
     // Run a small bounded cleanup batch during normal traffic as a fallback to the scheduled cleanup.
