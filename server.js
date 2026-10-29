@@ -7,7 +7,7 @@ const { Redis } = require('@upstash/redis');
 const app = express();
 app.disable('x-powered-by');
 
-const requiredEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'];
+const requiredEnv = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_UPLOAD_PRESET', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
 cloudinary.config({
@@ -68,7 +68,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Returns signed Cloudinary upload parameters. The API secret never reaches the browser.
+// Returns the configured unsigned preset for direct browser uploads. The API secret is never sent to the browser.
 app.post('/api/start', async (req, res) => {
   if (!assertConfigured(res)) return;
   try {
@@ -91,23 +91,20 @@ app.post('/api/start', async (req, res) => {
       return res.status(413).json({ error: 'Combined file size exceeds the configured 100 MB per-transfer limit.' });
     }
 
+    if (!process.env.CLOUDINARY_UPLOAD_PRESET) {
+      return res.status(503).json({ error: 'Missing CLOUDINARY_UPLOAD_PRESET in Vercel environment variables.' });
+    }
     const pin = await reservePin();
-    const uploads = files.map((file, index) => {
-      const timestamp = Math.floor(Date.now() / 1000);
-      const folder = `voltdrop_vault/${pin}`;
-      const public_id = `file_${index + 1}_${crypto.randomBytes(5).toString('hex')}`;
-      const params = { folder, public_id, timestamp };
-      return {
-        name: String(file.name || `file-${index + 1}`).slice(0, 255),
-        type: String(file.type || 'application/octet-stream').slice(0, 150),
-        size: Number(file.size),
-        cloudName: process.env.CLOUDINARY_CLOUD_NAME,
-        apiKey: process.env.CLOUDINARY_API_KEY,
-        resourceType: 'auto',
-        params,
-        signature: cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET)
-      };
-    });
+    const uploads = files.map((file, index) => ({
+      name: String(file.name || `file-${index + 1}`).slice(0, 255),
+      type: String(file.type || 'application/octet-stream').slice(0, 150),
+      size: Number(file.size),
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      uploadPreset: process.env.CLOUDINARY_UPLOAD_PRESET,
+      folder: `voltdrop_vault/${pin}`,
+      publicId: `file_${index + 1}_${crypto.randomBytes(5).toString('hex')}`,
+      resourceType: 'auto'
+    }));
     res.json({ pin, uploads });
   } catch (err) {
     console.error('Start upload failed:', err.message);
