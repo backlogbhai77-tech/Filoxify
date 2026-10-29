@@ -1,8 +1,8 @@
 {
   "name": "voltdrop",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
-  "description": "PIN-based file and text transfer with Cloudinary storage and Upstash Redis metadata",
+  "description": "PIN-based file transfer with concurrent upload queue, per-file progress, retry and cancellation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
