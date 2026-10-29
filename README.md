@@ -1,71 +1,46 @@
-# VoltDrop / Filoxify — repaired Vercel deployment
+# VoltDrop / Filoxify — Phase 1 security hardening
 
-This repair keeps the existing single-page interface and replaces the fragile upload/storage flow.
+This is an incremental upgrade of the existing v4 project. It preserves the single-page UI, direct browser-to-Cloudinary upload path, four-digit PIN UX, Upstash metadata store, and current 100 MB / 20-file limits.
 
-## What changed
+## Phase 1 changes
 
-- Files upload directly from the browser to Cloudinary using the configured unsigned upload preset. The API secret is never sent to the browser. Configure preset limits and allowed formats in Cloudinary.
-- PIN metadata is stored in Upstash Redis, not a process-local JavaScript object, so separate Vercel function instances can retrieve the same transfer.
-- Multiple uploaded files are listed on the receive screen.
-- Upload errors from the API and Cloudinary are shown instead of silently failing.
-- API credentials are read from environment variables.
-- The app currently caps a transfer at 100 MB total, each file at 100 MB, and 20 files. Cloudinary account limits still apply.
-- PINs expire 15 minutes after upload completion (and unfinished reservations also expire).
+- Per-IP Redis rate limits on transfer creation, PIN lookups and file-link requests.
+- A random per-transfer upload authorization token. `/api/complete` now requires it and compares it in constant time.
+- Server-issued expected file IDs are stored at `/api/start`; `/api/complete` checks the file count, Cloudinary URL host/cloud name, public ID, and actual byte count before making a transfer available.
+- Safe DOM text rendering for filenames (no filename interpolation into `innerHTML`).
+- Security response headers, no-store headers on transfer responses, and improved `/api/health` that pings Redis.
+- Expiry cleanup index and protected `/api/cleanup` endpoint. Cleanup records outlive the short transfer metadata so Cloudinary assets can be deleted after the transfer expires. Normal traffic also processes a small bounded cleanup batch.
+- Cloudinary asset cleanup requires `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` to be configured in Vercel. These secrets stay server-side.
 
-## Important security action
+## Required Vercel environment variables
 
-The original uploaded `server.js` contained a Cloudinary API key and API secret. Treat that secret as compromised:
-1. Open Cloudinary Console and rotate/revoke the exposed API secret.
-2. Add the new credentials only to Vercel Environment Variables.
-3. Remove the old credentials from Git history if this repository was public or shared. Rotating the secret is still necessary even after removing it from Git.
-
-## Required setup
-
-### 1. Create an Upstash Redis database
-Create a Redis database in Upstash and copy its REST URL and REST token.
-
-### 2. Set Vercel environment variables
-In **Vercel → Project → Settings → Environment Variables**, add:
-
+Keep existing variables:
 - `CLOUDINARY_CLOUD_NAME`
-- `CLOUDINARY_UPLOAD_PRESET` (for example, `filoxify_upload`; must exactly match your unsigned Cloudinary preset name)
-- `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` may remain configured for future signed/server-side features, but this browser-upload flow does not send them to the browser.
+- `CLOUDINARY_UPLOAD_PRESET`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
 
-Use the same values for Preview and Production environments as needed. Do not put secrets in `index.html`, `NEXT_PUBLIC_*` variables, or GitHub.
+Add `CRON_SECRET` with a long random value in Vercel Production (and Preview only if you want cleanup there). Do not paste the secret into chat or commit it to GitHub. Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` to the configured cleanup endpoint.
 
-### 3. Deploy
-Replace the repository contents with the contents of this ZIP, commit and push, then redeploy in Vercel. The `api/[...path].js` catch-all function routes general `/api/*` requests to Express. Explicit `api/check/[pin].js` and `api/view/[pin]/[index].js` entry points are also included so the receiver PIN lookup and file-view paths are mapped directly. The receiver UI now detects non-JSON responses and shows a useful HTTP/error preview instead of crashing with `Unexpected token` while parsing HTML/text. Do not add a catch-all rewrite sending every URL to `index.html` or `/server.js`.
+The included cron runs daily at 03:00 UTC for compatibility with Vercel Hobby schedules. The endpoint can be called more frequently by an external scheduler if your plan permits; it is protected by `CRON_SECRET`. Expired assets may therefore remain in Cloudinary until cleanup runs, although Redis transfer metadata expires after 15 minutes. Opportunistic cleanup also runs when new transfers are started.
 
-### 4. Verify configuration
-Open `https://YOUR-DEPLOYMENT/api/health`. It should return `ok: true` and an empty `missing` array. If not, fix the listed environment variables and redeploy.
+## Deploy safely
 
-## Receiver API route fix (v4)
+1. Download and extract this ZIP.
+2. Update the existing files in the repository root; add the new `api/cleanup.js` file.
+3. Commit and push, then wait for Vercel deployment to finish.
+4. Add `CRON_SECRET` in Vercel Environment Variables and redeploy if you added it after the build.
+5. Open `/api/health`; it should return `ok: true`, `metadataStore: "Upstash Redis connected"`, and `cleanupConfigured: true`.
+6. Test a small image and a text snippet: upload, receive PIN, fetch from a separate/private browser, open/download, and confirm unknown PIN errors are clear.
+7. Do not test rate limits by repeatedly hitting the production site. If testing is needed, use Preview deployment.
 
-This version specifically addresses receiver-side `Unexpected token ... is not valid JSON` errors by adding explicit Vercel function files for `/api/check/:pin` and `/api/view/:pin/:index`, and by safely parsing the receiver lookup response. It does not change the direct Cloudinary upload flow, Redis data format, upload limits, PIN lifetime, or the visual design.
+## Important constraints and honest limitations
 
-## Test checklist
-
-Before uploading a real file, open `https://YOUR-DEPLOYMENT/api/health`. It must return JSON (not an HTML page) and show `ok: true`. If it returns HTML/404, verify Vercel Project Settings → Build & Development Settings → Root Directory points to the folder containing `index.html`, `server.js`, `package.json`, `vercel.json`, and `api/`.
-
-1. Open the app and upload one small image or text file.
-2. Wait for the PIN to appear.
-3. Open the app in a separate/private browser session and enter the PIN.
-4. Confirm the file is listed and its Open / Download link works.
-5. Repeat with multiple files and a text snippet.
-6. Confirm an unknown PIN returns a clear error.
-
-## Limits and known constraints
-
-- The browser sends file bytes directly to Cloudinary, avoiding Vercel's request-body limit for uploads routed through a Vercel Function.
-- This build is intentionally configured for 100 MB total per transfer. Cloudinary's account/plan and resource-type limits can be lower. It does **not** claim reliable 500 MB uploads.
-- Transfers are temporary and expire after 15 minutes. This is a temporary file-transfer service, not permanent storage.
-- PINs are four digits for compatibility with the existing UI. They are convenient but have only 9,000 possible values; avoid using this app for confidential or sensitive documents without adding stronger access controls and rate limiting.
-- ZIP bundling is not implemented; files are downloaded individually. The previous `/api/zip` route did not actually create a ZIP.
-- If Cloudinary upload succeeds but saving the metadata fails, an orphaned Cloudinary asset may remain until you clean it up.
-
-
-## Cloudinary upload preset note
-
-This version uses the unsigned preset named by `CLOUDINARY_UPLOAD_PRESET`. In Cloudinary, confirm that the preset is set to **Unsigned** and restrict it to permitted formats and size limits. If Cloudinary still returns HTTP 403 with a missing-permissions message, the restriction is at the Cloudinary product-environment/account level and code changes alone cannot override it.
+- The four-digit PIN remains for UI compatibility. Rate limits reduce brute-force attempts but do not make a four-digit PIN suitable for highly confidential files. Do not use this service for regulated or highly sensitive data yet.
+- The browser still uploads through an unsigned Cloudinary preset. Restrict allowed formats and file size in Cloudinary. An unsigned preset is public; server-side validation cannot stop someone from directly abusing the preset unless the preset/account itself is restricted.
+- The cleanup endpoint uses Cloudinary Admin API deletion and therefore needs valid API credentials. Test deletion in a Preview deployment before relying on automated cleanup for production data.
+- The daily cron on Vercel Hobby means expired assets can remain in storage for hours. For prompt deletion, use a plan/scheduler that supports more frequent jobs.
+- This does not implement resumable uploads, larger files, ZIP bundling, authentication, malware scanning, or a permanent transfer history.
+- This patch has been syntax-checked locally but cannot be fully integration-tested against your live Cloudinary/Upstash accounts from here. Deploy to Preview and run the test checklist before promoting it to Production.
