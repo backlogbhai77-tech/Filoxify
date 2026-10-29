@@ -127,13 +127,13 @@ input[type=file] { display: none; }
         </div>
         <div class="header-actions">
             <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn"><svg id="themeIcon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg></button>
-            <div class="status"><span class="status-dot"></span>Ready (500MB)</div>
+            <div class="status"><span class="status-dot"></span>Ready (100MB)</div>
         </div>
     </header>
     <section class="hero">
         <div class="hero-badge">Direct Relay</div>
         <h1>Transfer files & text <span>anywhere.</span></h1>
-        <p>Up to 500MB files & code snippets via secure keys.</p>
+        <p>Share files up to 100 MB per transfer using a PIN.</p>
     </section>
     <main class="card">
         <div class="tabs">
@@ -148,7 +148,7 @@ input[type=file] { display: none; }
             <div class="sub-panel active" id="panelSendFile">
                 <label class="dropzone" id="dropzone" for="fileInput">
                     <div class="drop-icon-box"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg></div>
-                    <div class="drop-title" id="dropTitle">Choose or drop files (Max 500MB)</div>
+                    <div class="drop-title" id="dropTitle">Choose or drop files (Max 100MB per transfer)</div>
                     <div class="drop-sub">Fast relay to phone, PC or tablet</div>
                 </label>
                 <input type="file" id="fileInput" multiple>
@@ -264,39 +264,106 @@ function renderFiles() {
     document.getElementById('fileCount').innerText = `${filesQueue.length} file(s)`;
     document.getElementById('totalSize').innerText = formatSize(totalBytes);
 }
-function triggerUpload() {
+async function triggerUpload() {
     if (!filesQueue.length) return showToast('Add files first');
+    const MAX_FILE = 100 * 1024 * 1024;
+    const totalBytes = filesQueue.reduce((sum, f) => sum + f.size, 0);
+    if (filesQueue.some(f => f.size > MAX_FILE)) return showToast('Each file must be 100 MB or smaller');
+    if (totalBytes > MAX_FILE) return showToast('Total transfer size must be 100 MB or smaller');
+    if (filesQueue.length > 20) return showToast('Maximum 20 files per transfer');
+
     const uploadBtn = document.getElementById('uploadBtn');
     const progressCard = document.getElementById('progressCard');
     const progressBar = document.getElementById('progressBar');
     const percentText = document.getElementById('percentText');
+    const progressStatus = document.getElementById('progressStatus');
     uploadBtn.disabled = true;
     progressCard.style.display = 'block';
-    const fd = new FormData();
-    filesQueue.forEach(f => fd.append('files', f));
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload', true);
-    xhr.upload.onprogress = e => {
-        if (!e.lengthComputable) return;
-        const percent = Math.round((e.loaded / e.total) * 100);
-        progressBar.style.width = percent + '%';
-        percentText.innerText = percent + '%';
-    };
-    xhr.onload = () => {
-        uploadBtn.disabled = false;
-        progressCard.style.display = 'none';
-        if (xhr.status === 200) {
-            try {
-                const data = JSON.parse(xhr.responseText);
-                document.getElementById('finalPin').innerText = data.pin;
-                document.getElementById('pinResult').style.display = 'block';
-            } catch (e) { showToast('Parsing failed'); }
-        } else {
-            showToast('Upload failed! File may be too large.');
+    document.getElementById('pinResult').style.display = 'none';
+    progressBar.style.width = '0%';
+    percentText.innerText = '0%';
+    let pin = '';
+
+    try {
+        progressStatus.innerText = 'Preparing secure upload...';
+        const startResponse = await fetch('/api/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: filesQueue.map(f => ({ name: f.name, type: f.type, size: f.size })) })
+        });
+        const startData = await startResponse.json();
+        if (!startResponse.ok) throw new Error(startData.error || 'Could not start upload');
+        pin = startData.pin;
+        const uploadedFiles = [];
+        let completedBytes = 0;
+
+        for (let i = 0; i < filesQueue.length; i++) {
+            const file = filesQueue[i];
+            const signed = startData.uploads[i];
+            progressStatus.innerText = `Uploading ${i + 1} of ${filesQueue.length}: ${file.name}`;
+            const result = await new Promise((resolve, reject) => {
+                const form = new FormData();
+                form.append('file', file);
+                form.append('api_key', signed.apiKey);
+                form.append('timestamp', String(signed.params.timestamp));
+                form.append('folder', signed.params.folder);
+                form.append('public_id', signed.params.public_id);
+                form.append('signature', signed.signature);
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/auto/upload`);
+                xhr.upload.onprogress = (event) => {
+                    if (!event.lengthComputable) return;
+                    const current = Math.min(event.loaded, file.size);
+                    const percent = totalBytes ? Math.round(((completedBytes + current) / totalBytes) * 90) : 90;
+                    progressBar.style.width = percent + '%';
+                    percentText.innerText = percent + '%';
+                };
+                xhr.onload = () => {
+                    let body = {};
+                    try { body = JSON.parse(xhr.responseText || '{}'); } catch (_) {}
+                    if (xhr.status >= 200 && xhr.status < 300 && body.secure_url) resolve(body);
+                    else reject(new Error(body.error && body.error.message ? body.error.message : `Cloudinary rejected ${file.name} (${xhr.status})`));
+                };
+                xhr.onerror = () => reject(new Error('Network error while uploading to Cloudinary'));
+                xhr.onabort = () => reject(new Error('Upload cancelled'));
+                xhr.send(form);
+            });
+            uploadedFiles.push({
+                name: file.name,
+                type: file.type || 'application/octet-stream',
+                size: file.size,
+                url: result.secure_url,
+                publicId: result.public_id,
+                resourceType: result.resource_type
+            });
+            completedBytes += file.size;
+            const percent = totalBytes ? Math.round((completedBytes / totalBytes) * 90) : 90;
+            progressBar.style.width = percent + '%';
+            percentText.innerText = percent + '%';
         }
-    };
-    xhr.onerror = () => { uploadBtn.disabled = false; progressCard.style.display = 'none'; showToast('Network error'); };
-    xhr.send(fd);
+
+        progressStatus.innerText = 'Saving transfer PIN...';
+        const completeResponse = await fetch('/api/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin, files: uploadedFiles })
+        });
+        const completeData = await completeResponse.json();
+        if (!completeResponse.ok) throw new Error(completeData.error || 'Could not save transfer PIN');
+
+        progressBar.style.width = '100%';
+        percentText.innerText = '100%';
+        document.getElementById('finalPin').innerText = pin;
+        document.getElementById('pinResult').style.display = 'block';
+        document.getElementById('expiryTimer').innerText = 'Expires in 15 minutes';
+        showToast('Transfer ready! Share this PIN.');
+    } catch (error) {
+        console.error('Upload failed:', error);
+        showToast(error.message || 'Upload failed. Please try again.');
+    } finally {
+        uploadBtn.disabled = false;
+        setTimeout(() => { progressCard.style.display = 'none'; }, 800);
+    }
 }
 function triggerTextUpload() {
     const textContent = document.getElementById('textInputContent').value;
@@ -314,22 +381,60 @@ function shareDirectLink() {
 async function verifyAndFetchVault() {
     const pin = document.getElementById('pinInput').value.trim();
     if (!/^\d{4}$/.test(pin)) return showToast('Enter valid 4-digit key');
-    const btn = document.getElementById('fetchBtn'), loader = document.getElementById('receiveLoader'), resultBox = document.getElementById('downloadResult');
-    btn.disabled = true; loader.style.display = 'block'; resultBox.innerHTML = '';
+    const btn = document.getElementById('fetchBtn');
+    const loader = document.getElementById('receiveLoader');
+    const resultBox = document.getElementById('downloadResult');
+    btn.disabled = true;
+    loader.style.display = 'block';
+    resultBox.innerHTML = '';
     try {
         const res = await fetch(`/api/check/${encodeURIComponent(pin)}`);
         const data = await res.json();
-        btn.disabled = false; loader.style.display = 'none';
         if (!res.ok) throw new Error(data.error || 'Invalid key');
-        const file = data.files[0];
-        const viewUrl = `/api/view/${pin}/0`;
-        if (file.name.endsWith('.txt')) {
-            resultBox.innerHTML = `<div class="vault-found-card"><div class="vault-found-header"><span>📝 Text</span><span>Key: ${pin}</span></div><div class="received-text-box" id="txtBox">Loading...</div><a href="${viewUrl}" download class="cta" style="text-decoration:none;">Download File</a></div>`;
-            fetch(viewUrl).then(r => r.text()).then(t => document.getElementById('txtBox').innerText = t);
-        } else {
-            resultBox.innerHTML = `<div class="vault-found-card"><div class="vault-found-header"><span>File Ready</span><span>Key: ${pin}</span></div><a href="${viewUrl}" download="${file.name}" class="cta" style="text-decoration:none;">Download ${file.name}</a></div>`;
-        }
-    } catch (e) { btn.disabled = false; loader.style.display = 'none'; showToast(e.message); }
+        if (!Array.isArray(data.files) || !data.files.length) throw new Error('No files found for this PIN');
+        const card = document.createElement('div');
+        card.className = 'vault-found-card';
+        const header = document.createElement('div');
+        header.className = 'vault-found-header';
+        const label = document.createElement('span');
+        label.textContent = `${data.files.length} file(s) ready`;
+        const keyLabel = document.createElement('span');
+        keyLabel.textContent = `PIN: ${pin}`;
+        header.append(label, keyLabel);
+        card.appendChild(header);
+
+        data.files.forEach((file, index) => {
+            const row = document.createElement('div');
+            row.className = 'file-item';
+            const info = document.createElement('div');
+            info.className = 'file-info';
+            const name = document.createElement('div');
+            name.className = 'file-name';
+            name.textContent = file.name || `File ${index + 1}`;
+            const size = document.createElement('div');
+            size.className = 'file-size';
+            size.textContent = formatSize(Number(file.size) || 0);
+            info.append(name, size);
+            const link = document.createElement('a');
+            link.className = 'btn-secondary';
+            link.href = `/api/view/${encodeURIComponent(pin)}/${index}`;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = 'Open / Download';
+            link.style.textDecoration = 'none';
+            link.style.display = 'inline-flex';
+            link.style.alignItems = 'center';
+            link.style.justifyContent = 'center';
+            row.append(info, link);
+            card.appendChild(row);
+        });
+        resultBox.appendChild(card);
+    } catch (e) {
+        showToast(e.message || 'Could not retrieve files');
+    } finally {
+        btn.disabled = false;
+        loader.style.display = 'none';
+    }
 }
 function showToast(msg) {
     const t = document.getElementById('toast'); t.innerText = msg; t.classList.add('show');
