@@ -264,6 +264,15 @@ function renderFiles() {
     document.getElementById('fileCount').innerText = `${filesQueue.length} file(s)`;
     document.getElementById('totalSize').innerText = formatSize(totalBytes);
 }
+async function readApiResponse(response) {
+    const raw = await response.text();
+    try {
+        return raw ? JSON.parse(raw) : {};
+    } catch (_) {
+        const preview = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+        throw new Error(`API returned HTML/non-JSON (HTTP ${response.status}). Check Vercel API routing/deployment. ${preview}`);
+    }
+}
 async function triggerUpload() {
     if (!filesQueue.length) return showToast('Add files first');
     const MAX_FILE = 100 * 1024 * 1024;
@@ -291,8 +300,8 @@ async function triggerUpload() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ files: filesQueue.map(f => ({ name: f.name, type: f.type, size: f.size })) })
         });
-        const startData = await startResponse.json();
-        if (!startResponse.ok) throw new Error(startData.error || 'Could not start upload');
+        const startData = await readApiResponse(startResponse);
+        if (!startResponse.ok) throw new Error(startData.error || `Could not start upload (HTTP ${startResponse.status})`);
         pin = startData.pin;
         const uploadedFiles = [];
         let completedBytes = 0;
@@ -348,8 +357,8 @@ async function triggerUpload() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pin, files: uploadedFiles })
         });
-        const completeData = await completeResponse.json();
-        if (!completeResponse.ok) throw new Error(completeData.error || 'Could not save transfer PIN');
+        const completeData = await readApiResponse(completeResponse);
+        if (!completeResponse.ok) throw new Error(completeData.error || `Could not save transfer PIN (HTTP ${completeResponse.status})`);
 
         progressBar.style.width = '100%';
         percentText.innerText = '100%';
