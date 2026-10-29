@@ -71,6 +71,9 @@ button { cursor: pointer; }
 .drop-types { margin-top: 10px; display: flex; gap: 6px; }
 .tag { font-size: 10px; font-weight: 600; color: var(--muted2); background: var(--surface3); padding: 3px 8px; border-radius: 6px; }
 input[type=file] { display: none; }
+.picker-actions { display:flex; gap:8px; margin-top:10px; }
+.picker-actions .btn-secondary { min-height:40px; line-height:1.3; }
+@media (max-width:360px) { .picker-actions { flex-direction:column; } }
 .files-section { display: none; margin-top: 12px; }
 .files-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 6px; }
 .file-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
@@ -161,7 +164,12 @@ input[type=file] { display: none; }
                     <div class="drop-title" id="dropTitle">Choose or drop files (Max 100MB per transfer)</div>
                     <div class="drop-sub">Fast relay to phone, PC or tablet</div>
                 </label>
+                <div class="picker-actions">
+                    <button class="btn-secondary" type="button" onclick="document.getElementById('mediaInput').click()">🖼️ Choose photos / videos</button>
+                    <button class="btn-secondary" type="button" onclick="document.getElementById('fileInput').click()">📁 Choose documents / files</button>
+                </div>
                 <input type="file" id="fileInput" multiple>
+                <input type="file" id="mediaInput" accept="image/*,video/*" multiple>
                 <div class="files-section" id="filesSection">
                     <div class="files-head"><strong id="fileCount">Selected</strong><span id="totalSize" style="color:var(--muted)">0 MB</span></div>
                     <div class="file-list" id="fileList"></div>
@@ -183,7 +191,7 @@ input[type=file] { display: none; }
             <div class="progress-card" id="progressCard">
                 <div class="progress-top"><span id="progressStatus">Uploading...</span><span class="progress-percent" id="percentText">0%</span></div>
                 <div class="progress-track"><div class="progress-fill" id="progressBar"></div></div>
-                <div class="upload-toolbar"><button class="btn-secondary" id="cancelUploadBtn" type="button" onclick="cancelAllUploads()">Cancel upload</button></div>
+                <div class="upload-toolbar"><button class="btn-secondary" id="cancelUploadBtn" type="button" onclick="handleUploadAction()">Cancel upload</button></div>
                 <div class="upload-note" id="uploadNote">Up to 3 files upload at once. Keep this page open until the PIN is ready.</div>
             </div>
             <div class="pin-result" id="pinResult">
@@ -259,30 +267,63 @@ function updateCharCount() {
 }
 function clearEditor() { document.getElementById('textInputContent').value = ''; updateCharCount(); }
 const fileInput = document.getElementById('fileInput');
-fileInput.addEventListener('change', function() {
-    if (uploadInProgress) { showToast('Wait for current upload to finish or cancel it first'); this.value = ''; return; }
-    if (!this.files.length) return;
-    filesQueue = [...filesQueue, ...Array.from(this.files)];
+const mediaInput = document.getElementById('mediaInput');
+function addSelectedFiles(input) {
+    if (uploadInProgress) { showToast('Wait for current upload to finish or cancel it first'); input.value = ''; return; }
+    if (!input.files || !input.files.length) return;
+    const incoming = Array.from(input.files);
+    // Avoid adding the exact same file twice when users switch between Gallery and Files.
+    const existing = new Set(filesQueue.map(f => `${f.name}|${f.size}|${f.lastModified}`));
+    const fresh = incoming.filter(f => !existing.has(`${f.name}|${f.size}|${f.lastModified}`));
+    filesQueue = [...filesQueue, ...fresh];
+    if (!uploadInProgress) uploadSession = null;
     renderFiles();
-    this.value = '';
-});
+    input.value = '';
+    if (!fresh.length) showToast('Those files are already selected');
+    else if (incoming.length > 1) showToast(`${fresh.length} file(s) added`);
+}
+fileInput.addEventListener('change', function() { addSelectedFiles(this); });
+mediaInput.addEventListener('change', function() { addSelectedFiles(this); });
 const dropzone = document.getElementById('dropzone');
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropzone.addEventListener(e, ev => ev.preventDefault()));
 dropzone.addEventListener('drop', e => {
     if (uploadInProgress) { showToast('Wait for current upload to finish or cancel it first'); return; }
     const files = Array.from(e.dataTransfer.files);
-    if (files.length) { filesQueue = [...filesQueue, ...files]; renderFiles(); }
+    if (files.length) { filesQueue = [...filesQueue, ...files]; if (!uploadInProgress) uploadSession = null; renderFiles(); }
 });
-function removeFile(i) { if (uploadInProgress) return showToast("Wait for upload to finish or cancel it first"); filesQueue.splice(i, 1); renderFiles(); }
+function removeFile(i) {
+    if (uploadInProgress) return showToast('Wait for upload to finish or cancel it first');
+    filesQueue.splice(i, 1);
+    uploadSession = null;
+    renderFiles();
+}
 function formatSize(b) {
     if (b < 1024) return b + ' B';
     if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
     return (b / 1048576).toFixed(1) + ' MB';
 }
-function renderFiles() {
+function renderFiles(preservePinResult = false) {
     const section = document.getElementById('filesSection');
     const list = document.getElementById('fileList');
-    if (!filesQueue.length) { section.style.display = 'none'; return; }
+    // A changed selection starts a fresh UI state; never leave an old percentage/count behind.
+    if (!uploadInProgress) {
+        document.getElementById('progressCard').style.display = 'none';
+        document.getElementById('progressBar').style.width = '0%';
+        document.getElementById('percentText').textContent = '0%';
+        document.getElementById('progressStatus').textContent = 'Ready to upload';
+        document.getElementById('cancelUploadBtn').textContent = 'Cancel upload';
+        document.getElementById('cancelUploadBtn').disabled = false;
+        if (!preservePinResult) document.getElementById('pinResult').style.display = 'none';
+        const uploadBtn = document.getElementById('uploadBtn');
+        uploadBtn.disabled = false;
+    }
+    if (!filesQueue.length) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        document.getElementById('fileCount').textContent = 'No files selected';
+        document.getElementById('totalSize').textContent = '0 B';
+        return;
+    }
     section.style.display = 'block';
     list.innerHTML = '';
     let totalBytes = 0;
@@ -432,8 +473,8 @@ async function finishTransferIfReady() {
         document.getElementById('pinResult').style.display = 'block';
         document.getElementById('expiryTimer').textContent = 'Expires in 15 minutes';
         document.getElementById('uploadNote').textContent = 'All files uploaded successfully.';
-        document.getElementById('cancelUploadBtn').textContent = 'Upload complete';
-        document.getElementById('cancelUploadBtn').disabled = true;
+        document.getElementById('cancelUploadBtn').textContent = 'Done';
+        document.getElementById('cancelUploadBtn').disabled = false;
         showToast('Transfer ready! Share this PIN.');
     } catch (error) {
         document.getElementById('progressStatus').textContent = 'Could not finalize transfer';
@@ -456,12 +497,26 @@ function cancelFileUpload(index) {
     if (xhr) xhr.abort();
 }
 function cancelAllUploads() {
-    if (!uploadSession) return;
+    if (!uploadSession || uploadSession.cancelled) return;
     uploadSession.cancelled = true;
     for (const xhr of uploadSession.activeXhrs.values()) xhr.abort();
     document.getElementById('progressStatus').textContent = 'Upload cancelled';
-    document.getElementById('uploadNote').textContent = 'Transfer cancelled. Start again to create a new PIN.';
+    document.getElementById('uploadNote').textContent = 'Transfer cancelled. Press Done to clear this attempt and start again.';
+    const action = document.getElementById('cancelUploadBtn');
+    action.textContent = 'Done';
+    action.disabled = false;
     showToast('Upload cancelled');
+}
+function handleUploadAction() {
+    const action = document.getElementById('cancelUploadBtn');
+    if (action.textContent.trim() === 'Done' || action.textContent.trim() === 'Upload complete') {
+        document.getElementById('progressCard').style.display = 'none';
+        filesQueue = [];
+        renderFiles(true);
+        uploadSession = null;
+        return;
+    }
+    cancelAllUploads();
 }
 async function triggerUpload() {
     if (uploadInProgress) return showToast('An upload is already running');
@@ -514,6 +569,7 @@ async function triggerUpload() {
         uploadBtn.disabled = false;
         if (uploadSession && !uploadSession.cancelled && uploadSession.files.every((_, i) => uploadSession.uploadedFiles[i])) {
             document.getElementById('cancelUploadBtn').textContent = 'Done';
+            document.getElementById('cancelUploadBtn').disabled = false;
         }
     }
 }
