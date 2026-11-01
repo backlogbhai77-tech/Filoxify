@@ -16,6 +16,10 @@
     "api/cleanup.js": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/zip/[pin].js": {
+      "maxDuration": 60,
+      "memory": 1024
     }
   },
   "crons": [
