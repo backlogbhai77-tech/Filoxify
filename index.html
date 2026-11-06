@@ -177,7 +177,7 @@ input[type=file] { display: none; }
                     <button class="btn-secondary" type="button" onclick="document.getElementById('fileInput').click()">📁 Choose documents / files</button>
                 </div>
                 <input type="file" id="fileInput" multiple>
-                <input type="file" id="mediaInput" accept="*/*" multiple>
+                <input type="file" id="mediaInput" accept="image/*,video/*" multiple>
                 <div class="files-section" id="filesSection">
                     <div class="files-head"><strong id="fileCount">Selected</strong><span id="totalSize" style="color:var(--muted)">0 MB</span></div>
                     <div class="file-list" id="fileList"></div>
@@ -425,7 +425,8 @@ function uploadOne(index) {
         session.activeXhrs.set(index, xhr);
         setFileStatus(index, 'Uploading', 0);
         document.getElementById(`retry-${index}`).style.display = 'none';
-        xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/auto/upload`);
+        const resourceType = ['image', 'video', 'raw'].includes(signed.resourceType) ? signed.resourceType : 'raw';
+        xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/${resourceType}/upload`);
         xhr.timeout = 0; // Large videos on slow mobile networks can take time; cancellation remains available.
         xhr.upload.onprogress = event => {
             if (!event.lengthComputable || !uploadSession) return;
