@@ -25,7 +25,8 @@ cloudinary.config({
 
 const VAULT_TTL_SECONDS = 15 * 60;
 const CLEANUP_RECORD_TTL_SECONDS = 7 * 24 * 60 * 60;
-
+// Cloudinary's configured upload path is capped at 100 MB per file in this app.
+// Environment variables can lower limits to suit an account, but never raise them above this provider cap.
 function boundedMb(value, fallback, max = 100) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1 ? Math.min(max, Math.floor(parsed)) * 1024 * 1024 : fallback * 1024 * 1024;
@@ -76,23 +77,33 @@ async function rateLimit(req, res, bucket, limit, windowSeconds) {
     }
     return true;
   } catch (err) {
+    // Fail closed for PIN lookups and transfer creation if the rate-limit store is unavailable.
     console.error('Rate limiter unavailable:', err.message);
     res.status(503).json({ error: 'Security check temporarily unavailable. Please retry shortly.' });
     return false;
   }
 }
 function asObject(raw) { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+function getExpectedResourceType(file) {
+  const name = String(file && file.name || '').toLowerCase();
+  const type = String(file && file.type || '').toLowerCase();
+  if (type.startsWith('image/') || /\\.(png|jpe?g|gif|webp|bmp|avif|svg|heic|heif|tif|tiff)$/.test(name)) return 'image';
+  if (type.startsWith('video/') || /\\.(mp4|webm|mov|m4v|ogv|avi|mkv|3gp|mpeg|mpg)$/.test(name)) return 'video';
+  return 'raw';
+}
 function normalizePublicId(value) { return String(value || '').replace(/^\/+|\/+$/g, ''); }
 function matchesExpectedPublicId(actual, expected, resourceType, originalName) {
   const a = normalizePublicId(actual);
   const e = normalizePublicId(expected);
   if (!a || !e) return false;
-  
+  // Cloudinary can append the original file extension to raw assets even when
+  // a server-issued public_id is supplied (common for TXT/PDF/ZIP documents).
+  // Accept only the exact ID, a folder-qualified exact ID, or that ID plus the
+  // extension from the server-reserved filename for raw resources.
   const candidates = [e];
-  // Support APK, Raw files, and Cloudinary auto-appended extensions
-  const match = String(originalName || '').match(/(\.[a-z0-9]{1,10})$/i);
-  if (match) {
-    candidates.push(e + match[1]);
+  if (resourceType === 'raw') {
+    const match = String(originalName || '').match(/(\.[a-z0-9]{1,10})$/i);
+    if (match) candidates.push(e + match[1]);
   }
   return candidates.some(candidate => a === candidate || a.endsWith('/' + candidate));
 }
@@ -110,6 +121,7 @@ async function reservePin({ uploadToken, expectedFiles }) {
       status: 'uploading', files: [], expectedFiles, uploadTokenHash: sha256(uploadToken), createdAt: now
     }), { nx: true, ex: VAULT_TTL_SECONDS });
     if (ok === 'OK') {
+      // A cleanup record exists before uploads begin, so failed/incomplete transfers can also be cleaned up.
       await redis.set(CLEANUP_KEY(pin), JSON.stringify({ files: expectedFiles.map(f => ({ publicId: f.publicId, alternatePublicIds: [`voltdrop_vault/${pin}/${f.publicId}`], resourceType: f.expectedResourceType || 'auto' })) }), { ex: CLEANUP_RECORD_TTL_SECONDS });
       await redis.zadd(EXPIRY_INDEX, { score: now + VAULT_TTL_SECONDS * 1000, member: pin });
       return pin;
@@ -149,6 +161,7 @@ async function cleanupExpiredAssets(maxItems = 10) {
           }
           if (removed) break;
         }
+        // Keep retrying if Cloudinary was unavailable; a missing asset is safe to ignore.
         if (sawError && !removed) cleanupNeedsRetry = true;
       }
       if (cleanupNeedsRetry) {
@@ -158,6 +171,7 @@ async function cleanupExpiredAssets(maxItems = 10) {
     }
     await redis.del(CLEANUP_KEY(pin));
     await redis.zrem(EXPIRY_INDEX, pin);
+    // Delete expired metadata too, in case its TTL has not been processed yet.
     await redis.del(PIN_KEY(pin));
   }
   return { checked: (pins || []).length, deleted };
@@ -196,29 +210,17 @@ app.post('/api/start', async (req, res) => {
     if (total > MAX_TOTAL_BYTES) return res.status(413).json({ error: `Combined file size exceeds the configured ${Math.floor(MAX_TOTAL_BYTES / 1048576)} MB per-transfer limit.` });
     if (!process.env.CLOUDINARY_UPLOAD_PRESET) return res.status(503).json({ error: 'Missing CLOUDINARY_UPLOAD_PRESET in Vercel environment variables.' });
 
+    // Run a small bounded cleanup batch during normal traffic as a fallback to the scheduled cleanup.
     cleanupExpiredAssets(3).catch(err => console.error('Opportunistic cleanup failed:', err.message));
 
     const uploadToken = crypto.randomBytes(32).toString('hex');
-    const expectedFiles = files.map((file, index) => {
-      const fileName = String(file.name || `file-${index + 1}`).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255);
-      const mimeType = String(file.type || '').toLowerCase();
-      const ext = fileName.split('.').pop().toLowerCase();
-      
-      // Automatic detection for APK, ZIP, Executables, and general raw binaries
-      let expectedType = 'raw';
-      if (mimeType.startsWith('video/')) expectedType = 'video';
-      else if (mimeType.startsWith('image/')) expectedType = 'image';
-      else if (ext === 'apk' || mimeType.includes('vnd.android.package-archive')) expectedType = 'raw';
-
-      return {
-        name: fileName,
-        type: mimeType || (ext === 'apk' ? 'application/vnd.android.package-archive' : 'application/octet-stream'),
-        size: Number(file.size),
-        publicId: `file_${index + 1}_${crypto.randomBytes(10).toString('hex')}`,
-        expectedResourceType: expectedType
-      };
-    });
-
+    const expectedFiles = files.map((file, index) => ({
+      name: String(file.name || `file-${index + 1}`).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 255),
+      type: String(file.type || 'application/octet-stream').slice(0, 150),
+      size: Number(file.size),
+      publicId: `file_${index + 1}_${crypto.randomBytes(10).toString('hex')}`,
+      expectedResourceType: getExpectedResourceType(file)
+    }));
     const pin = await reservePin({ uploadToken, expectedFiles });
     const uploads = expectedFiles.map((file) => ({
       name: file.name, type: file.type, size: file.size,
@@ -226,7 +228,7 @@ app.post('/api/start', async (req, res) => {
       uploadPreset: process.env.CLOUDINARY_UPLOAD_PRESET,
       folder: `voltdrop_vault/${pin}`,
       publicId: file.publicId,
-      resourceType: 'auto'
+      resourceType: file.expectedResourceType
     }));
     res.set('Cache-Control', 'no-store');
     res.json({ pin, uploadToken, uploads });
@@ -359,6 +361,7 @@ app.get('/api/view/:pin/:index', async (req, res) => {
   }
 });
 
+// Vercel Cron can call this endpoint with Authorization: Bearer $CRON_SECRET.
 app.get('/api/cleanup', async (req, res) => {
   if (!process.env.CRON_SECRET || req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'Unauthorized.' });
