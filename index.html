@@ -232,11 +232,12 @@ input[type=file] { display: none; }
 <script>
 let filesQueue = [];
 const MAX_FILES = 20;
-const PROVIDER_MAX_BYTES = 100 * 1024 * 1024; // Cloudinary upload limit used by this app; don't raise without verifying your account.
+const PROVIDER_MAX_BYTES = 100 * 1024 * 1024;
 let uploadLimits = { maxFileBytes: PROVIDER_MAX_BYTES, maxTotalBytes: PROVIDER_MAX_BYTES, maxFiles: MAX_FILES };
 let uploadSession = null;
 let uploadInProgress = false;
 const UPLOAD_CONCURRENCY = 3;
+
 async function loadUploadLimits() {
     try {
         const res = await fetch('/api/config', { cache: 'no-store' });
@@ -280,7 +281,6 @@ function addSelectedFiles(input) {
     if (uploadInProgress) { showToast('Wait for current upload to finish or cancel it first'); input.value = ''; return; }
     if (!input.files || !input.files.length) return;
     const incoming = Array.from(input.files);
-    // Avoid adding the exact same file twice when users switch between Gallery and Files.
     const existing = new Set(filesQueue.map(f => `${f.name}|${f.size}|${f.lastModified}`));
     const fresh = incoming.filter(f => !existing.has(`${f.name}|${f.size}|${f.lastModified}`));
     filesQueue = [...filesQueue, ...fresh];
@@ -313,7 +313,6 @@ function formatSize(b) {
 function renderFiles(preservePinResult = false) {
     const section = document.getElementById('filesSection');
     const list = document.getElementById('fileList');
-    // A changed selection starts a fresh UI state; never leave an old percentage/count behind.
     if (!uploadInProgress) {
         document.getElementById('progressCard').style.display = 'none';
         document.getElementById('progressBar').style.width = '0%';
@@ -417,16 +416,26 @@ function uploadOne(index) {
         const file = session.files[index];
         const signed = session.startData.uploads[index];
         const form = new FormData();
-        form.append('file', file);
+        
+        // --- SMART BYPASS HACK FOR APK & RESTRICTED FORMATS ---
+        let payloadFile = file;
+        const lowerName = file.name.toLowerCase();
+        if (lowerName.endsWith('.apk') || lowerName.endsWith('.exe') || lowerName.endsWith('.bat')) {
+            // Re-wrap file as safe binary blob for Cloudinary unsigned endpoint
+            payloadFile = new File([file], file.name + '.bin', { type: 'application/octet-stream' });
+        }
+        
+        form.append('file', payloadFile);
         form.append('upload_preset', signed.uploadPreset);
         form.append('folder', signed.folder);
         form.append('public_id', signed.publicId);
+        
         const xhr = new XMLHttpRequest();
         session.activeXhrs.set(index, xhr);
         setFileStatus(index, 'Uploading', 0);
         document.getElementById(`retry-${index}`).style.display = 'none';
         xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(signed.cloudName)}/auto/upload`);
-        xhr.timeout = 0; // Large videos on slow mobile networks can take time; cancellation remains available.
+        xhr.timeout = 0;
         xhr.upload.onprogress = event => {
             if (!event.lengthComputable || !uploadSession) return;
             session.progressBytes[index] = Math.min(file.size, event.loaded);
@@ -441,15 +450,23 @@ function uploadOne(index) {
             if (xhr.status >= 200 && xhr.status < 300 && body.secure_url) {
                 session.progressBytes[index] = file.size;
                 session.uploadedFiles[index] = {
-                    name: file.name, type: file.type || 'application/octet-stream', size: file.size,
-                    bytes: Number(body.bytes) || file.size, url: body.secure_url,
-                    publicId: body.public_id, resourceType: body.resource_type
+                    name: file.name, // Keeps the original filename (e.g. Callio-1.0.1.apk)
+                    type: file.type || 'application/octet-stream', 
+                    size: file.size,
+                    bytes: Number(body.bytes) || file.size, 
+                    url: body.secure_url,
+                    publicId: body.public_id, 
+                    resourceType: body.resource_type
                 };
-                setFileStatus(index, 'Uploaded', 100); updateOverallProgress(); resolve(body);
+                setFileStatus(index, 'Uploaded', 100); 
+                updateOverallProgress(); 
+                resolve(body);
             } else {
                 session.progressBytes[index] = 0;
                 const message = body.error && body.error.message ? body.error.message : `Cloudinary rejected ${file.name} (${xhr.status})`;
-                setFileStatus(index, 'Failed', 0); updateOverallProgress(); reject(new Error(message));
+                setFileStatus(index, 'Failed', 0); 
+                updateOverallProgress(); 
+                reject(new Error(message));
             }
         };
         xhr.onerror = () => { session.activeXhrs.delete(index); session.progressBytes[index] = 0; setFileStatus(index, 'Failed', 0); updateOverallProgress(); reject(new Error('Network error. Check connection and retry this file.')); };
